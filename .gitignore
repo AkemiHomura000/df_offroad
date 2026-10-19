@@ -1,0 +1,112 @@
+# =============================================================================
+# df_offroad — keep code / configs; ignore datasets, runs, weights, caches
+# =============================================================================
+
+# ----- datasets & downloads -----
+/datasets/
+/downloads/
+*.npz
+*.npz.gz
+*.pkl
+*.h5
+*.hdf5
+*.parquet
+*.bag
+*.mcap
+
+# ----- experiment outputs -----
+/log/
+/results/
+**/tb/
+**/tensorboard/
+**/wandb/
+**/runs/
+**/outputs/
+**/lightning_logs/
+*.ckpt
+*.pt
+
+# ----- pretrained / large model weights -----
+**/ckpts/
+*.pth
+*.bin
+*.onnx
+*.safetensors
+*.engine
+*.trt
+
+# ----- Verti-Bench simulation assets / maps (Python under verti_bench/ kept) -----
+/verti_bench/envs/data/
+/verti_bench/assets/*.tar.bz2
+/verti_bench/assets/*.tar.gz
+/verti_bench/rl/sim2real/
+
+# ----- DiffusionDriveV2 bulky non-code -----
+/DiffusionDriveV2/download/
+/DiffusionDriveV2/assets/
+
+# obsolete / nested clone (prefer DiffusionDriveV2)
+/DiffusionDrive/
+
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ----- virtualenvs -----
+.venv/
+venv/
+env/
+ENV/
+.env/
+
+# ----- IDE / OS -----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ----- notebooks / local scratch -----
+.ipynb_checkpoints/
+*.ipynb
+
+# ----- logs / temp / media dumps -----
+*.log
+*.tmp
+*.temp
+*.bak
+*.cache
+nohup.out
+*.mp4
+*.avi
+*.mov
+*.gif
+
+# ----- editor / agent local state -----
+.cursor/
