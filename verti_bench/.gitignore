@@ -1,0 +1,66 @@
+# Python cache files
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.env/
+.venv/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Logs
+*.log
+logs/
+
+# Folders
+/rl/sim2real/*
+
+# VertiBench specific .ipynb files
+/envs/utils/PaperPlot.ipynb
+/envs/utils/analyze_worlds.ipynb
+/envs/utils/bmpNorm.ipynb
+/envs/utils/gen_bumpyBMP.ipynb
+/envs/utils/gen_DataSet.ipynb
+/envs/utils/transform.ipynb
+/envs/utils/check_traj.ipynb
+# VertiBench specific .py files
+/envs/utils/bitmap_gen.py
+/envs/utils/Failures.py
+/envs/utils/Readbag.py
+
+# VertiBench data folders
+/envs/data/BenchMaps/sampled_maps/TrainSet/*
+/envs/data/BenchMaps/sampled_maps/TestSet/*
+/envs/data/BenchMaps/sampled_maps/TestWorlds/*
+/envs/data/BenchMaps/sampled_maps/Configs/tmp/*
+assets/pychrono-9.0.1-py39_1.tar.bz2
+/envs/data/BenchMaps/sampled_maps/Trajs/*
