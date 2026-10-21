@@ -41,7 +41,32 @@ export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 export CHRONO_DATA_DIR="${_DF_OFFROAD_ROOT}/verti_bench/envs/data/"
 export PYTHONPATH="${_DF_OFFROAD_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
 
-# ROS2 Humble if present
+# Source-built PyChrono (Ubuntu 20.04): prefer repo-local downloads/ over conda/pip.
+# Layout: downloads/chrono (src) + downloads/chrono_build (cmake build tree).
+# Python modules usually live in chrono_build/bin/pychrono/; some builds put *.so in bin/.
+_CHRONO_BUILD="${CHRONO_BUILD_DIR:-${_DF_OFFROAD_ROOT}/downloads/chrono_build}"
+_CHRONO_SRC="${CHRONO_SRC_DIR:-${_DF_OFFROAD_ROOT}/downloads/chrono}"
+_CHRONO_PY_OK=0
+if [[ -d "${_CHRONO_BUILD}/bin/pychrono" ]]; then
+  _CHRONO_PY_OK=1
+elif [[ -f "${_CHRONO_BUILD}/bin/_core.so" || -f "${_CHRONO_BUILD}/bin/__init__.py" ]]; then
+  _CHRONO_PY_OK=1
+elif compgen -G "${_CHRONO_BUILD}/bin/_core*.so" >/dev/null 2>&1; then
+  _CHRONO_PY_OK=1
+fi
+# ROS first (may rewrite PYTHONPATH); Chrono paths are prepended AFTER so they win.
 [[ -f /opt/ros/humble/setup.bash ]] && source /opt/ros/humble/setup.bash
+[[ -f /opt/ros/foxy/setup.bash ]] && source /opt/ros/foxy/setup.bash
 
-unset _CONDA_SH _DF_OFFROAD_ROOT
+if [[ "${_CHRONO_PY_OK}" -eq 1 ]]; then
+  export PYTHONPATH="${_CHRONO_BUILD}/bin:${_DF_OFFROAD_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+  export LD_LIBRARY_PATH="${_CHRONO_BUILD}/lib:${_CHRONO_BUILD}/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  if [[ -d "${_CHRONO_SRC}/libraries/urdf/lib" ]]; then
+    export LD_LIBRARY_PATH="${_CHRONO_SRC}/libraries/urdf/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  fi
+  echo "[verti_bench_env] PyChrono PYTHONPATH+=${_CHRONO_BUILD}/bin"
+else
+  echo "[verti_bench_env] warn: no PyChrono under ${_CHRONO_BUILD}/bin (run: ls ${_CHRONO_BUILD}/bin)" >&2
+fi
+
+unset _CONDA_SH _DF_OFFROAD_ROOT _CHRONO_BUILD _CHRONO_SRC _CHRONO_PY_OK

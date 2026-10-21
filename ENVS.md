@@ -16,6 +16,7 @@ Miniconda/Anaconda: `$HOME/miniconda3` 或 `$HOME/anaconda3`（见 `*_env.sh`）
 - Python 3.9 · PyChrono 9.0.1 · numpy 1.24.0 · torch 2.7.1+cu118 · cudatoolkit 11.8
 - 数据: `CHRONO_DATA_DIR=.../verti_bench/envs/data/`
 - 代码路径: `PYTHONPATH` 含仓库根（`verti_bench_env.sh` / 脚本内按 `__file__` 解析；本机或 `~/df_offroad` 均可）
+- **Ubuntu 20.04 源码编**：源码 `downloads/chrono`，构建 `downloads/chrono_build`（勿用 `~/Documents`）。`verti_bench_env.sh` 若发现 `downloads/chrono_build/bin/pychrono` 会自动前置到 `PYTHONPATH`/`LD_LIBRARY_PATH`。勿 `pip install pychrono`。
 - 仿真: `cd verti_bench && python setup.py`
 - DDV2 传感器: `python setup.py ... ddv2_sensors=true`（可选 `ddv2_dump_dir=...`）
   - 模块: `verti_bench/envs/utils/ddv2_sensors.py`
