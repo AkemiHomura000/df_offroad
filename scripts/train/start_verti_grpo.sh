@@ -3,7 +3,8 @@
 # Env overrides: OUT DATA_DIR CACHE_DIR CKPT PLAN_ANCHOR EPOCHS BATCH LR NUM_GROUPS …
 #   EPOCHS=5 BATCH=2 NUM_GROUPS=2 bash scripts/train/start_verti_grpo.sh
 set -eo pipefail
-ROOT=/home/rm/Desktop/df_offroad
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT"
 # shellcheck disable=SC1091
 source "$ROOT/ddv2_env.sh"

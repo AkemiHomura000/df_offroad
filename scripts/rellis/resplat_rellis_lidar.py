@@ -12,6 +12,8 @@ import re
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -46,9 +48,7 @@ def main():
     ap.add_argument(
         "--poses_root",
         type=Path,
-        default=Path(
-            "/home/rm/Desktop/df_offroad/downloads/RELLIS3D/extracted/poses/Rellis-3D"
-        ),
+        default=(ROOT / "downloads/RELLIS3D/extracted/poses/Rellis-3D"),
     )
     ap.add_argument("--seqs", type=str, default="", help="comma list; empty=all")
     args = ap.parse_args()

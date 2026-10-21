@@ -16,9 +16,7 @@ import numpy as np
 import yaml
 from PIL import Image
 
-MAPS_DIR = Path(
-    "/home/rm/Desktop/df_offroad/verti_bench/envs/data/BenchMaps/sampled_maps/Configs/Final"
-)
+MAPS_DIR = Path(__file__).resolve().parents[2] / "verti_bench/envs/data/BenchMaps/sampled_maps/Configs/Final"
 
 
 def _load_config(world_id: int) -> dict:

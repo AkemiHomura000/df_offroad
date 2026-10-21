@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path("/home/rm/Desktop/df_offroad")
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "bridge"))
 
 from verti_metric_cache import VertiMetricCache, WorldMapBank, load_index  # noqa: E402

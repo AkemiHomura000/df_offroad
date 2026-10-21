@@ -34,7 +34,7 @@ from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 
-ROOT = Path("/home/rm/Desktop/df_offroad")
+ROOT = Path(__file__).resolve().parents[2]
 DDV2 = ROOT / "DiffusionDriveV2"
 sys.path.insert(0, str(ROOT / "scripts" / "bridge"))
 sys.path.insert(0, str(ROOT / "scripts" / "rellis"))

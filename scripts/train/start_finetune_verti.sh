@@ -2,7 +2,8 @@
 # IL fine-tune on Verti elevation BEV data (exp/lidar-elevation-bev).
 # Env overrides: OUT DATA_DIR INIT_CKPT PLAN_ANCHOR EPOCHS BATCH LR WARMUP ANCHOR_KEEP
 set -eo pipefail
-ROOT=/home/rm/Desktop/df_offroad
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT"
 # shellcheck disable=SC1091
 source "$ROOT/ddv2_env.sh"

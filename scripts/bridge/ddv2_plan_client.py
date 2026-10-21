@@ -9,7 +9,7 @@ from typing import Dict, Optional
 
 import numpy as np
 
-ROOT = Path("/home/rm/Desktop/df_offroad")
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "bridge"))
 
 from ddv2_plan_protocol import recv_npz, send_npz  # noqa: E402

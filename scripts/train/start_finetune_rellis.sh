@@ -2,7 +2,8 @@
 # IL fine-tune on RELLIS (default: RELLIS anchors, hold-out val).
 # Env overrides: OUT DATA_DIR INIT_CKPT PLAN_ANCHOR EPOCHS BATCH LR WARMUP ANCHOR_KEEP RESUME
 set -eo pipefail
-ROOT=/home/rm/Desktop/df_offroad
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT"
 # shellcheck disable=SC1091
 source "$ROOT/ddv2_env.sh"

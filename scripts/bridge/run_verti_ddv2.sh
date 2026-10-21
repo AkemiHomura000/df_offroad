@@ -2,11 +2,12 @@
 # Verti-Bench with DDV2 replacing A* planning.
 # Starts plan server (ddv2 env) then sim (chrono9). Ctrl+C stops both.
 set -eo pipefail
-ROOT=/home/rm/Desktop/df_offroad
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # Prefer elevation-FT ckpt on exp/lidar-elevation-bev; fall back to dens v3 if missing.
 CKPT="${CKPT:-$ROOT/log/verti_il_finetune_elevation/ckpts/best.ckpt}"
 if [[ ! -f "$CKPT" ]]; then
-  CKPT="$ROOT/log/verti_il_finetune_v3_density/ckpts/best.ckpt"
+  CKPT="$ROOT/log/verti_il_scratch_elevation_goal/ckpts/best.ckpt"
 fi
 PLAN_ANCHOR="${PLAN_ANCHOR:-$ROOT/DiffusionDriveV2/kmeans_verti_traj_20.npy}"
 HOST="${DDV2_HOST:-127.0.0.1}"

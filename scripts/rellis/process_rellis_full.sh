@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Per-sequence: extract → build npz → delete raw (save disk). Merged zips stay on /tmp.
 set -eo pipefail
-ROOT=/home/rm/Desktop/df_offroad
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BASE=$ROOT/downloads/RELLIS3D
 OUT_RAW=$BASE/extracted/Rellis-3D
 POSE_SRC=$BASE/extracted/poses/Rellis-3D
@@ -108,8 +109,8 @@ build_seq() {
     append_flag=(--append)
   fi
   echo "[build] $s → $NPZ_OUT"
-  source /home/rm/miniconda3/etc/profile.d/conda.sh
-  conda activate ddv2
+  # shellcheck disable=SC1091
+  source "$ROOT/ddv2_env.sh"
   python "$ROOT/scripts/rellis/build_rellis_ddv2_dataset.py" \
     --root_dir "$OUT_RAW" \
     --seqs "$s" \

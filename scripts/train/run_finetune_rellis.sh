@@ -3,7 +3,8 @@
 # Matches TransfuserAgent recipe: WarmupCosLR, AdamW (backbone lr×0.5),
 # trajectory_weight * LossComputer; optional anchor_keep for unused modes.
 set -eo pipefail
-ROOT=/home/rm/Desktop/df_offroad
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT/ddv2_env.sh"
 export HF_HUB_OFFLINE=1

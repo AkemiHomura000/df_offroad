@@ -19,6 +19,8 @@ import re
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -105,11 +107,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--dataset_dir",
-        default="/home/rm/Desktop/df_offroad/datasets/ddv2_rellis_full",
+        default=str(ROOT / "datasets/ddv2_rellis_full"),
     )
     ap.add_argument(
         "--poses_root",
-        default="/home/rm/Desktop/df_offroad/downloads/RELLIS3D/extracted/poses/Rellis-3D",
+        default=str(ROOT / "downloads/RELLIS3D/extracted/poses/Rellis-3D"),
     )
     ap.add_argument("--lidar_hz", type=float, default=0.0)
     ap.add_argument("--horizon_s", type=float, default=0.0)

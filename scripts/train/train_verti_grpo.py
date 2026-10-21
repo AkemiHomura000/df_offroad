@@ -4,6 +4,9 @@
 Rewards come from scripts/bridge/verti_pdm_scorer.get_verti_score_para
 (same subscore keys as official PDMS so hard-failure advantage=-1 still applies).
 
+Use --closed_loop to score Chrono-map kinematic rollouts (PDMSimulator-style)
+instead of open-loop waypoints.
+
 Does NOT import diffusiondrivev2_model_rl (needs full nuplan/PDMS). Instead:
   - backbone + TrajectoryHead from IL V2TransfuserModel
   - DDIMScheduler_with_logprob + GRPO advantage math from verti_grpo_utils
@@ -24,7 +27,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 
-ROOT = Path("/home/rm/Desktop/df_offroad")
+ROOT = Path(__file__).resolve().parents[2]
 DDV2 = ROOT / "DiffusionDriveV2"
 sys.path.insert(0, str(ROOT / "scripts" / "bridge"))
 sys.path.insert(0, str(ROOT / "scripts" / "train"))
@@ -41,6 +44,7 @@ from navsim.agents.diffusiondrive.transfuser_config import TransfuserConfig  # n
 from navsim.agents.diffusiondrive.transfuser_model_v2 import V2TransfuserModel  # noqa: E402
 
 from verti_grpo_utils import (  # noqa: E402
+    ChronoCLSimConfig,
     DDIMScheduler_with_logprob,
     VertiMetricCache,
     WorldMapBank,
@@ -450,12 +454,19 @@ def main():
     ap.add_argument("--eta", type=float, default=1.0)
     ap.add_argument("--num_workers", type=int, default=2)
     ap.add_argument("--max_steps", type=int, default=0, help="0=full epoch")
+    ap.add_argument(
+        "--closed_loop",
+        action="store_true",
+        help="Chrono-map closed-loop kinematic rollout before VertiPDM score",
+    )
+    ap.add_argument("--cl_v_ref", type=float, default=4.0, help="CL sim cruise speed (m/s)")
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     bank = WorldMapBank()
+    cl_cfg = ChronoCLSimConfig(v_ref=float(args.cl_v_ref)) if args.closed_loop else None
     history = empty_history()
     curves_path = args.out_dir / "curves.png"
     history_path = args.out_dir / "history.json"
@@ -469,7 +480,10 @@ def main():
         collate_fn=collate,
         drop_last=True,
     )
-    print(f"[data] train={len(train_ds)} batches/epoch≈{len(train_loader)}")
+    print(
+        f"[data] train={len(train_ds)} batches/epoch≈{len(train_loader)} "
+        f"closed_loop={args.closed_loop}"
+    )
 
     model = build_model(args.ckpt, device, args.plan_anchor_path)
     head = model._trajectory_head
@@ -513,7 +527,12 @@ def main():
                 gt = targets["trajectory"].unsqueeze(1)
                 traj_with_gt = torch.cat([traj, gt], dim=1)
                 scores, _, subs = get_verti_score_para(
-                    traj_with_gt, caches, bank=bank, first_is_gt=False
+                    traj_with_gt,
+                    caches,
+                    bank=bank,
+                    first_is_gt=False,
+                    closed_loop=args.closed_loop,
+                    cl_cfg=cl_cfg,
                 )
                 # scores: (B, G*N+1) with GT last
                 reward_group = scores[:, :-1]

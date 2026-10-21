@@ -27,7 +27,7 @@ from verti_metric_cache import (
     save_index,
 )
 
-ROOT = Path("/home/rm/Desktop/df_offroad")
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _obs_path(expert_dir: Path, seq: str, frame_idx: int) -> Path:

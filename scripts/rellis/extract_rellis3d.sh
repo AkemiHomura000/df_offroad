@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Extract RELLIS-3D camera + Ouster lidar for selected sequences into extracted/Rellis-3D/
 set -eo pipefail
-BASE=/home/rm/Desktop/df_offroad/downloads/RELLIS3D
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BASE="$ROOT/downloads/RELLIS3D"
 OUT=$BASE/extracted/Rellis-3D
 POSE_SRC=$BASE/extracted/poses/Rellis-3D
 SEQS="${SEQS:-00001,00002,00003,00004}"

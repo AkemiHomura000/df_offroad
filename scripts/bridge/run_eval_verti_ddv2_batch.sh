@@ -9,7 +9,8 @@
 #   SCENES_FILE=log/verti_ddv2_eval_v3_density/scenes_manifest.json \
 #     OUT=log/verti_ddv2_eval_replay bash scripts/bridge/run_eval_verti_ddv2_batch.sh
 set -eo pipefail
-ROOT=/home/rm/Desktop/df_offroad
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CKPT="${CKPT:-$ROOT/log/verti_il_finetune_elevation/ckpts/best.ckpt}"
 if [[ ! -f "$CKPT" ]]; then
   CKPT="$ROOT/log/verti_il_finetune_v3_density/ckpts/best.ckpt"

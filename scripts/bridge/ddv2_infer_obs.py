@@ -3,13 +3,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import os
 import sys
 
 import numpy as np
 import torch
 
-ROOT = "/home/rm/Desktop/df_offroad"
+ROOT = str(Path(__file__).resolve().parents[2])
 DDV2 = f"{ROOT}/DiffusionDriveV2"
 sys.path.insert(0, f"{ROOT}/scripts/bridge")
 sys.path.insert(0, DDV2)

@@ -36,12 +36,15 @@ import signal
 import subprocess
 import sys
 import time as wall
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
 from scipy.ndimage import binary_dilation
 
 from verti_bench.envs.utils.utils import SetChronoDataDirectories
+
+ROOT = Path(__file__).resolve().parents[2]
 
 ASTAR_SYSTEMS = ['pid', 'eh', 'mppi', 'mppi6', 'tal', 'tnt', 'wmvct']
 CFG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -500,7 +503,7 @@ def run_episode(args, ep, world, system, rng):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--out', default='/home/rm/Desktop/df_offroad/log/verti_expert')
+    ap.add_argument('--out', default=str(ROOT / "log/verti_expert"))
     ap.add_argument('--systems', default='mppi6', help=f'comma list from {ASTAR_SYSTEMS}')
     ap.add_argument('--worlds', default='low', help="e.g. '5,9,11' | '1-20' | low|mid|high|all")
     ap.add_argument('--episodes', type=int, default=0, help='total episodes; 0 = until Ctrl+C')

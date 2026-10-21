@@ -2,7 +2,8 @@
 # Open-loop ADE/FDE eval (RELLIS or Verti dataset) via eval_rellis_il.py.
 # Optional baseline compare. Env: OUT CKPT BASELINE DATA_DIR SPLIT VIZ_K PLAN_ANCHOR MAX_SAMPLES
 set -eo pipefail
-ROOT=/home/rm/Desktop/df_offroad
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT"
 # shellcheck disable=SC1091
 source "$ROOT/ddv2_env.sh"

@@ -18,6 +18,8 @@ from typing import List, Optional
 import cv2
 import numpy as np
 
+ROOT = Path(__file__).resolve().parents[2]
+
 
 def parse_pose_line(line: str) -> np.ndarray:
     """KITTI 3x4 pose → 4x4."""
@@ -261,7 +263,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--root_dir",
-        default="/home/rm/Desktop/df_offroad/downloads/RELLIS3D/extracted/Rellis-3D",
+        default=str(ROOT / "downloads/RELLIS3D/extracted/Rellis-3D"),
         help="Directory containing 00000/00001/... sequences",
     )
     ap.add_argument(
@@ -271,7 +273,7 @@ def main():
     )
     ap.add_argument(
         "--out_dir",
-        default="/home/rm/Desktop/df_offroad/datasets/ddv2_rellis_full",
+        default=str(ROOT / "datasets/ddv2_rellis_full"),
     )
     ap.add_argument("--max_samples", type=int, default=0, help="0 = no cap (full)")
     ap.add_argument("--max_samples_per_seq", type=int, default=0, help="0 = no per-seq cap")

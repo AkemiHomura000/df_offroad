@@ -15,6 +15,8 @@ from typing import Deque, Dict, Optional, Tuple
 import cv2
 import numpy as np
 
+ROOT = Path(__file__).resolve().parents[3]
+
 
 def _to_u8_rgb(img: np.ndarray) -> np.ndarray:
     x = np.asarray(img)
@@ -295,7 +297,7 @@ class DDV2LiveViz:
         self.infer_hist: Deque[float] = deque(maxlen=history)
         self.rtt_hist: Deque[float] = deque(maxlen=history)
         self.n_infer = 0
-        self.save_path = Path(save_path) if save_path else Path("/home/rm/Desktop/df_offroad/log/verti_ddv2/live_panel.jpg")
+        self.save_path = Path(save_path) if save_path else (ROOT / "log/verti_ddv2/live_panel.jpg")
         self.save_path.parent.mkdir(parents=True, exist_ok=True)
         self._queue: Queue = Queue(maxsize=2)
         self._proc = Process(target=_viewer_main, args=(self._queue,), daemon=True)

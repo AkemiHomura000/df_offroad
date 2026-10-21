@@ -39,7 +39,8 @@
 | `start_eval_openloop.sh` | nohup 开环 ADE/FDE 评测（可对比 baseline） |
 | `run_finetune_rellis.sh` | IL 微调实际入口（被 start_* 调用；RELLIS/Verti 共用） |
 | `run_eval_rellis.sh` | 开环评测实际入口 |
-| `run_verti_grpo.sh` | GRPO 实际入口 |
+| `run_verti_grpo.sh` | GRPO 实际入口（`CLOSED_LOOP=1` → Chrono 地图闭环打分） |
+| `smoke_verti_grpo_chrono.sh` | Chrono-map 闭环评分 + 1-step GRPO 冒烟 |
 
 常用环境变量：`OUT` `DATA_DIR` `CKPT`/`INIT_CKPT` `PLAN_ANCHOR` `EPOCHS` `BATCH` `LR` `RESUME` `BASELINE` `MAX_SAMPLES`
 
@@ -83,7 +84,8 @@ WORLDS=all TASKS=1 OUT=log/verti_ddv2_eval_100 \
 | `build_verti_ddv2_dataset.py` | 专家 ep → dens/elevation 训练样本（默认 `--status_nav goal`） |
 | `rewrite_verti_status_goal.py` | 已有数据集 status 重写为 ego 目标点（方案 B，不重采） |
 | `build_verti_metric_cache.py` | 为 GRPO 建 VertiMetricCache |
-| `verti_metric_cache.py` / `verti_pdm_scorer.py` | 越野 metric / VertiPDM 打分 |
+| `verti_metric_cache.py` / `verti_pdm_scorer.py` | 越野 metric / VertiPDM 打分（可选 closed_loop） |
+| `verti_chrono_cl_sim.py` | Chrono 地图运动学闭环 rollout（GRPO 用，无需 PyChrono） |
 | `ddv2_plan_server.py` / `ddv2_plan_client.py` / `ddv2_plan_protocol.py` | 闭环规划 TCP 服务 |
 | `eval_verti_ddv2_batch.py` | 批量闭环评测（无 GUI） |
 | `viz_verti_expert.py` | 专家轨迹可视化 |
@@ -96,6 +98,7 @@ WORLDS=all TASKS=1 OUT=log/verti_ddv2_eval_100 \
 | `train_rellis_il.py` | IL 微调（RELLIS/Verti 数据集通用） |
 | `eval_rellis_il.py` | 开环评测 + 对比图 |
 | `train_verti_grpo.py` / `verti_grpo_utils.py` | Verti GRPO 训练 |
+| `smoke_verti_grpo_chrono.py` | Chrono-CL 打分 + 1-step GRPO 冒烟 |
 | `sanity_verti_pdm.py` | VertiPDM 可分性自检 |
 | `patch_verti_pdm_backend.py` | 可选：把官方 RL head 接到 VertiPDM |
 

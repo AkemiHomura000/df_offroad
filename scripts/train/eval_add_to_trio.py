@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 import torch
 
-ROOT = Path("/home/rm/Desktop/df_offroad")
+ROOT = Path(__file__).resolve().parents[2]
 DDV2 = ROOT / "DiffusionDriveV2"
 sys.path[:0] = [str(ROOT / "scripts/bridge"), str(ROOT / "scripts/rellis"), str(ROOT / "scripts/train"), str(DDV2)]
 

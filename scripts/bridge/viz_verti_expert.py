@@ -11,6 +11,7 @@ Examples:
   python viz_verti_expert.py --ep log/verti_expert/ep_00003_w5_pid
   python viz_verti_expert.py --all --status success        # every episode in --src
 """
+from pathlib import Path
 import argparse
 import csv
 import glob
@@ -29,7 +30,7 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_verti_ddv2_dataset import future_labels  # noqa: E402
 
-ROOT = '/home/rm/Desktop/df_offroad'
+ROOT = str(Path(__file__).resolve().parents[2])
 MAPS = os.path.join(ROOT, 'verti_bench/envs/data/BenchMaps/sampled_maps')
 BEV_RANGE, BEV_PPM = 32.0, 4.0
 

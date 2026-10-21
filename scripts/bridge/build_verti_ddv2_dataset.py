@@ -30,11 +30,13 @@ import os
 import shutil
 import sys
 
+from pathlib import Path
+
 import numpy as np
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from verti_bench.envs.utils.ddv2_status import (  # noqa: E402
     GOAL_NORM_M,
@@ -139,11 +141,11 @@ def save_sample(out_root, split, sid, cam, lidar, status, traj, name, fidx, meta
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--src', default='/home/rm/Desktop/df_offroad/log/verti_expert')
+    ap.add_argument('--src', default=str(ROOT / "log/verti_expert"))
     ap.add_argument('--lidar_mode', choices=['density', 'elevation', 'both'], default='elevation')
     ap.add_argument('--out', default='', help='single-mode output dir')
-    ap.add_argument('--out_density', default='/home/rm/Desktop/df_offroad/datasets/verti_ddv2_density')
-    ap.add_argument('--out_elevation', default='/home/rm/Desktop/df_offroad/datasets/verti_ddv2_elevation')
+    ap.add_argument('--out_density', default=str(ROOT / "datasets/verti_ddv2_density"))
+    ap.add_argument('--out_elevation', default=str(ROOT / "datasets/verti_ddv2_elevation"))
     ap.add_argument('--status', default='success')
     ap.add_argument('--min_t', type=float, default=1.0)
     ap.add_argument('--min_progress', type=float, default=0.5)

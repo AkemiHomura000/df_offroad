@@ -16,10 +16,11 @@ import torch
 from diffusers.schedulers import DDIMScheduler
 from diffusers.utils.torch_utils import randn_tensor
 
-ROOT = Path("/home/rm/Desktop/df_offroad")
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "bridge"))
 
 from verti_metric_cache import VertiMetricCache, WorldMapBank  # noqa: E402
+from verti_chrono_cl_sim import ChronoCLSimConfig, simulate_proposals  # noqa: E402
 from verti_pdm_scorer import (  # noqa: E402
     VertiPDMConfig,
     compute_grpo_advantages,
@@ -34,6 +35,8 @@ __all__ = [
     "compute_grpo_advantages",
     "score_batch",
     "VertiPDMConfig",
+    "ChronoCLSimConfig",
+    "simulate_proposals",
     "WorldMapBank",
     "VertiMetricCache",
     "grpo_advantages_torch",

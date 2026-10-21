@@ -1,4 +1,9 @@
-"""VertiPDM: open-loop off-road trajectory scorer (PDMS surrogate).
+"""VertiPDM: off-road trajectory scorer (PDMS surrogate).
+
+Open-loop scores planned waypoints; closed-loop (`closed_loop=True`) first rolls
+them out with Chrono-map kinematic bicycle + pure-pursuit (see
+`verti_chrono_cl_sim`), then scores the simulated states — same role as NAVSIM
+PDMSimulator before PDMS.
 
 Interface mirrors DiffusionDriveV2 PDMS subscores so GRPO hard-penalty logic
 (no_collision / drivable_area → advantage -1) works unchanged:
@@ -18,6 +23,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+from verti_chrono_cl_sim import ChronoCLSimConfig, simulate_proposals
 from verti_metric_cache import (
     VertiMetricCache,
     WorldMapBank,
@@ -94,6 +100,8 @@ def score_batch(
     cfg: Optional[VertiPDMConfig] = None,
     *,
     first_is_gt: bool = True,
+    closed_loop: bool = False,
+    cl_cfg: Optional[ChronoCLSimConfig] = None,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """Score G ego-frame trajectories.
 
@@ -103,6 +111,8 @@ def score_batch(
       world: height + obstacle maps
       first_is_gt: PDMS convention (GT at index 0); returned scores are for [1:] if True,
                    else for all G.
+      closed_loop: if True, Chrono-map kinematic rollout before scoring
+      cl_cfg: closed-loop sim params
 
     Returns:
       final_scores (G' ,) float32
@@ -110,6 +120,10 @@ def score_batch(
     """
     cfg = cfg or VertiPDMConfig()
     trajs = np.asarray(trajs_ego, dtype=np.float64)
+    cl_crash = None
+    if closed_loop:
+        sim_ego, cl_crash = simulate_proposals(trajs, sample, world=world, cfg=cl_cfg)
+        trajs = sim_ego.astype(np.float64)
     if trajs.ndim != 3 or trajs.shape[1] != 8:
         raise ValueError(f"expected (G,8,C), got {trajs.shape}")
     G = trajs.shape[0]
@@ -134,6 +148,9 @@ def score_batch(
     # also check waypoint centers
     hit_c = sample_obstacle(world, xy_w.reshape(-1, 2)).reshape(G, 8)
     no_crash = (~hit.any(axis=1) & ~hit_c.any(axis=1)).astype(np.float64)
+    if cl_crash is not None:
+        no_crash = (no_crash > 0.5) & (~np.asarray(cl_crash, dtype=bool))
+        no_crash = no_crash.astype(np.float64)
 
     # --- slope / tip from heights ---
     z = sample_height(world, xy_w.reshape(-1, 2)).reshape(G, 8)
@@ -232,6 +249,8 @@ def get_verti_score_para(
     cfg: Optional[VertiPDMConfig] = None,
     *,
     first_is_gt: bool = True,
+    closed_loop: bool = False,
+    cl_cfg: Optional[ChronoCLSimConfig] = None,
 ):
     """Drop-in replacement for TrajectoryHead.get_pdm_score_para.
 
@@ -245,6 +264,7 @@ def get_verti_score_para(
                   Official pdm_score puts GT as proposal 0. Our train path will cat GT first.
       caches: length B VertiMetricCache (or dicts)
       first_is_gt: True if traj[:,0] is GT.
+      closed_loop: Chrono-map kinematic closed-loop rollout before VertiPDM score
 
     Returns:
       scores (B, G_out) torch/numpy matching trajectory device if torch
@@ -271,6 +291,7 @@ def get_verti_score_para(
     scores = []
     subs = []
     caches_out = []
+    score_kw = dict(closed_loop=closed_loop, cl_cfg=cl_cfg)
     for b in range(B):
         c = caches[b]
         if isinstance(c, dict):
@@ -281,7 +302,7 @@ def get_verti_score_para(
         if not first_is_gt:
             # official appends GT last → move to front for pairwise
             tb = np.concatenate([tb[-1:], tb[:-1]], axis=0)
-            sc, sub = score_batch(tb, c, world, cfg, first_is_gt=True)
+            sc, sub = score_batch(tb, c, world, cfg, first_is_gt=True, **score_kw)
             # sc/sub are for original candidates in order [0..G-2] matching diffusion then we need
             # to append GT score: recompute full including GT at end for reward_gt
             # After reorder tb=[GT, cand...], score_batch returns cand scores only.
@@ -289,15 +310,15 @@ def get_verti_score_para(
             # Official: reward_group includes GT as last column.
             # Our score_batch with first_is_gt returns only candidates (G-1,).
             # Score GT alone for last column:
-            sc_gt, sub_gt = score_batch(tb[:1], c, world, cfg, first_is_gt=False)
+            sc_gt, sub_gt = score_batch(tb[:1], c, world, cfg, first_is_gt=False, **score_kw)
             sc_full = np.concatenate([sc, sc_gt], axis=0)
             sub_full = {k: np.concatenate([sub[k], sub_gt[k]], axis=0) for k in sub}
             scores.append(sc_full)
             subs.append(sub_full)
         else:
-            sc, sub = score_batch(tb, c, world, cfg, first_is_gt=True)
+            sc, sub = score_batch(tb, c, world, cfg, first_is_gt=True, **score_kw)
             # return with GT score prepended for logging consistency → (G,) with GT at 0
-            sc_gt, sub_gt = score_batch(tb[:1], c, world, cfg, first_is_gt=False)
+            sc_gt, sub_gt = score_batch(tb[:1], c, world, cfg, first_is_gt=False, **score_kw)
             sc_full = np.concatenate([sc_gt, sc], axis=0)
             sub_full = {k: np.concatenate([sub_gt[k], sub[k]], axis=0) for k in sub}
             scores.append(sc_full)

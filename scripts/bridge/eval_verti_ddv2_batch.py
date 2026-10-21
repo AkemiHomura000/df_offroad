@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import yaml
 
-ROOT = Path("/home/rm/Desktop/df_offroad")
+ROOT = Path(__file__).resolve().parents[2]
 CFG_DIR = ROOT / "verti_bench/envs/data/BenchMaps/sampled_maps/Configs/Final"
 sys.path.insert(0, str(ROOT))
 

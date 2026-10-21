@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import os
 import sys
 
 import numpy as np
 
-ROOT = "/home/rm/Desktop/df_offroad"
+ROOT = str(Path(__file__).resolve().parents[2])
 sys.path.insert(0, ROOT)
 
 from verti_bench.envs.utils.utils import SetChronoDataDirectories

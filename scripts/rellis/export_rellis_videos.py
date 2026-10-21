@@ -9,6 +9,8 @@ import subprocess
 from collections import defaultdict
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+
 import cv2
 import numpy as np
 
@@ -189,8 +191,8 @@ def export_seq(
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data_dir", type=Path, default=Path("/home/rm/Desktop/df_offroad/datasets/ddv2_rellis_full"))
-    ap.add_argument("--out_dir", type=Path, default=Path("/home/rm/Desktop/df_offroad/log/rellis_videos"))
+    ap.add_argument("--data_dir", type=Path, default=(ROOT / "datasets/ddv2_rellis_full"))
+    ap.add_argument("--out_dir", type=Path, default=(ROOT / "log/rellis_videos"))
     ap.add_argument("--seqs", type=str, default="", help="comma list e.g. 00000,00001; empty=all")
     ap.add_argument("--fps", type=float, default=10.0, help="output fps (dataset lidar_hz≈10)")
     ap.add_argument("--stride", type=int, default=1, help="use every Nth sample")

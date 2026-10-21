@@ -1,6 +1,6 @@
 # 环境说明（df_offroad）
 
-Miniconda: `/home/rm/miniconda3`
+Miniconda/Anaconda: `$HOME/miniconda3` 或 `$HOME/anaconda3`（见 `*_env.sh`）
 
 | 环境 | 用途 | 启用 |
 |------|------|------|
@@ -15,7 +15,7 @@ Miniconda: `/home/rm/miniconda3`
 
 - Python 3.9 · PyChrono 9.0.1 · numpy 1.24.0 · torch 2.7.1+cu118 · cudatoolkit 11.8
 - 数据: `CHRONO_DATA_DIR=.../verti_bench/envs/data/`
-- 代码路径: `PYTHONPATH` 含 `/home/rm/Desktop/df_offroad`
+- 代码路径: `PYTHONPATH` 含仓库根（`verti_bench_env.sh` / 脚本内按 `__file__` 解析；本机或 `~/df_offroad` 均可）
 - 仿真: `cd verti_bench && python setup.py`
 - DDV2 传感器: `python setup.py ... ddv2_sensors=true`（可选 `ddv2_dump_dir=...`）
   - 模块: `verti_bench/envs/utils/ddv2_sensors.py`

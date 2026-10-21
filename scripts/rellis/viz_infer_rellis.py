@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from matplotlib import cm
 from matplotlib.colors import Normalize
 
-ROOT = Path("/home/rm/Desktop/df_offroad")
+ROOT = Path(__file__).resolve().parents[2]
 DDV2 = ROOT / "DiffusionDriveV2"
 sys.path.insert(0, str(ROOT / "scripts" / "bridge"))
 sys.path.insert(0, str(DDV2))

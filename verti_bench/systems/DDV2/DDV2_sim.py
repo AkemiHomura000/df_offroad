@@ -1,3 +1,4 @@
+from pathlib import Path
 import pychrono as chrono
 import pychrono.vehicle as veh
 import pychrono.irrlicht as chronoirr 
@@ -144,7 +145,7 @@ class DDV2Sim:
         """Connect to DDV2 plan server and build local tracker."""
         if self.system_type.lower() != 'ddv2':
             raise ValueError(f"Unsupported system type: {self.system_type}.")
-        sys.path.insert(0, "/home/rm/Desktop/df_offroad/scripts/bridge")
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts" / "bridge"))
         from ddv2_plan_client import DDV2PlanClient
 
         self.plan_client = DDV2PlanClient(host=self.ddv2_host, port=self.ddv2_port)
