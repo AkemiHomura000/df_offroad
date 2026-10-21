@@ -297,10 +297,10 @@ class DDV2Sim:
         z0 = float(vehicle_pos.z) + 0.4
         for i, (x, y) in enumerate(path):
             r = 0.25 if i < len(path) - 1 else 0.4
-            body = chrono.ChBodyEasySphere(r, 1000, True, True)
+            # collide=False: Chrono asserts material if collide=True without ChContactMaterial
+            body = chrono.ChBodyEasySphere(r, 1000, True, False)
             body.SetPos(chrono.ChVector3d(float(x), float(y), z0))
             body.SetFixed(True)
-            body.EnableCollision(False)
             # cyan-ish for mid, yellow for end
             if hasattr(body, "GetVisualModel") and body.GetVisualModel() is not None:
                 pass

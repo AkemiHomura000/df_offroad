@@ -14,48 +14,36 @@ import argparse
 from PIL import Image
 
 from verti_bench.envs.utils.utils import SetChronoDataDirectories
-from verti_bench.systems.PID.PID_sim import PIDSim
-from verti_bench.systems.EH.EH_sim import EHSim
-from verti_bench.systems.MPPI.MPPI_sim import MPPISim
-from verti_bench.systems.RL.RL_sim import RLSim
-from verti_bench.systems.MCL.MCL_sim import MCLSim
-from verti_bench.systems.ACL.ACL_sim import ACLSim
-from verti_bench.systems.WMVCT.WMVCT_sim import WMVCTSim
-from verti_bench.systems.MPPI6.MPPI6_sim import MPPI6Sim
-from verti_bench.systems.TAL.TAL_sim import TALSim
-from verti_bench.systems.TNT.TNT_sim import TNTSim
-from verti_bench.systems.Manual.Manual_sim import ManualSim
-from verti_bench.systems.DDV2.DDV2_sim import DDV2Sim
+
+# Lazy imports: MPPI/TAL/TNT/etc. need ROS grid_map_msgs; DDV2/PID do not.
+_SYSTEM_SIM = {
+    'pid': ('verti_bench.systems.PID.PID_sim', 'PIDSim'),
+    'eh': ('verti_bench.systems.EH.EH_sim', 'EHSim'),
+    'mppi': ('verti_bench.systems.MPPI.MPPI_sim', 'MPPISim'),
+    'rl': ('verti_bench.systems.RL.RL_sim', 'RLSim'),
+    'mcl': ('verti_bench.systems.MCL.MCL_sim', 'MCLSim'),
+    'acl': ('verti_bench.systems.ACL.ACL_sim', 'ACLSim'),
+    'wmvct': ('verti_bench.systems.WMVCT.WMVCT_sim', 'WMVCTSim'),
+    'mppi6': ('verti_bench.systems.MPPI6.MPPI6_sim', 'MPPI6Sim'),
+    'tal': ('verti_bench.systems.TAL.TAL_sim', 'TALSim'),
+    'tnt': ('verti_bench.systems.TNT.TNT_sim', 'TNTSim'),
+    'manual': ('verti_bench.systems.Manual.Manual_sim', 'ManualSim'),
+    'ddv2': ('verti_bench.systems.DDV2.DDV2_sim', 'DDV2Sim'),
+}
+
+
+def _load_sim_class(system):
+    if system not in _SYSTEM_SIM:
+        raise ValueError(f"Unknown system: {system}")
+    module_name, class_name = _SYSTEM_SIM[system]
+    import importlib
+    return getattr(importlib.import_module(module_name), class_name)
+
 
 def single_experiment(config):
     """Run a single simulation experiment"""
-    # Create and initialize simulation
-    if config['system'] == 'pid':
-        sim = PIDSim(config)
-    elif config['system'] == 'eh':
-        sim = EHSim(config)
-    elif config['system'] == 'mppi':
-        sim = MPPISim(config)
-    elif config['system'] == 'rl':
-        sim = RLSim(config)
-    elif config['system'] == 'mcl':
-        sim = MCLSim(config)
-    elif config['system'] == 'acl':
-        sim = ACLSim(config)
-    elif config['system'] == 'wmvct':
-        sim = WMVCTSim(config)
-    elif config['system'] == 'mppi6':
-        sim = MPPI6Sim(config)
-    elif config['system'] == 'tal':
-        sim = TALSim(config)
-    elif config['system'] == 'tnt':
-        sim = TNTSim(config)
-    elif config['system'] == 'manual':
-        sim = ManualSim(config)
-    elif config['system'] == 'ddv2':
-        sim = DDV2Sim(config)
-    else:
-        raise ValueError(f"Unknown system: {config['system']}")
+    SimCls = _load_sim_class(config['system'])
+    sim = SimCls(config)
     sim.initialize()
     
     # Run simulation
