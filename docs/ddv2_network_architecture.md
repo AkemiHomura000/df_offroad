@@ -129,8 +129,8 @@ x \leftarrow x \cdot (1 + \gamma(c)) + \beta(c)
 | 输入 | 形状 | 含义 |
 |---|---|---|
 | `camera_feature` | 3×256×1024 | 前视相机 RGB，归一化到 [0, 1] |
-| `lidar_feature` | 1×256×256 | 激光雷达 BEV 点数直方图：±32 m，4 px/m，每格计数截断到 5 后除以 5 |
-| `status_feature` | 8 | 驾驶指令 one-hot（左/直/右/未知，4 维）+ 自车系速度 vx, vy + 加速度 ax, ay |
+| `lidar_feature` | 1×256×256 | 激光雷达 BEV（±32 m，4 px/m）。**本分支默认高程**：底盘系 max-z 映射到 `[0,1]`（`elev∈[-3,4]` m）；旧版为点数直方图（截断 5 后归一化） |
+| `status_feature` | 8 | **导航条件（方案 B，默认）**：自车系目标 `[gx,gy]/32`→`[-1,1]` + `‖g‖/32`→`[0,1]` + 0，共 4 维；后接自车系 `vx,vy,ax,ay`。旧版为 L/S/R/U one-hot（`status_nav_mode=command`） |
 
 坐标约定：自车系 x 向前，y 向左。
 

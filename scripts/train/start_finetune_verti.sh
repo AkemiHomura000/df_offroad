@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# IL fine-tune on Verti density data (default: success-only dens + Verti anchors).
+# IL fine-tune on Verti elevation BEV data (exp/lidar-elevation-bev).
 # Env overrides: OUT DATA_DIR INIT_CKPT PLAN_ANCHOR EPOCHS BATCH LR WARMUP ANCHOR_KEEP
 set -eo pipefail
 ROOT=/home/rm/Desktop/df_offroad
@@ -19,10 +19,10 @@ if ! nvidia-smi &>/dev/null; then
 fi
 nvidia-smi --query-gpu=name,memory.free --format=csv,noheader
 
-OUT="${OUT:-$ROOT/log/verti_il_finetune}"
+OUT="${OUT:-$ROOT/log/verti_il_finetune_elevation}"
 mkdir -p "$OUT"
 export OUT \
-  DATA_DIR="${DATA_DIR:-$ROOT/datasets/verti_ddv2_density}" \
+  DATA_DIR="${DATA_DIR:-$ROOT/datasets/verti_ddv2_elevation}" \
   INIT_CKPT="${INIT_CKPT:-$ROOT/DiffusionDriveV2/ckpts/diffusiondrive_navsim_88p1_PDMS}" \
   PLAN_ANCHOR="${PLAN_ANCHOR:-$ROOT/DiffusionDriveV2/kmeans_verti_traj_20.npy}" \
   EPOCHS="${EPOCHS:-10}" \

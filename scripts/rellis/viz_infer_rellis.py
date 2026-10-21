@@ -47,6 +47,14 @@ def _draw_trajs_on_ax(
     ax.plot(0, 0, marker="+", color="red", markersize=12, mew=2, zorder=10, label="ego")
     best_i = None
     if modes is not None and scores is not None:
+        scores = np.asarray(scores, dtype=np.float64)
+        modes = np.asarray(modes, dtype=np.float64)
+        # NaN/Inf (diverged training) → skip mode drawing rather than crash viz.
+        if not np.isfinite(scores).all() or not np.isfinite(modes).all():
+            scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
+            modes = np.nan_to_num(modes, nan=0.0, posinf=0.0, neginf=0.0)
+            if float(scores.sum()) <= 0:
+                scores = np.ones(len(scores), dtype=np.float64) / max(len(scores), 1)
         best_i = int(np.argmax(scores))
         score_floor = float(np.percentile(scores, 70))
         norm = Normalize(vmin=float(scores.min()), vmax=float(scores.max()) + 1e-8)
@@ -55,7 +63,7 @@ def _draw_trajs_on_ax(
             if i == best_i:
                 continue
             c = cmap(norm(scores[i]))
-            alpha = 0.15 + 0.35 * float(norm(scores[i]))
+            alpha = float(np.clip(0.15 + 0.35 * float(norm(scores[i])), 0.0, 1.0))
             lw = 1.2 if scores[i] >= score_floor else 0.7
             ax.plot(modes[i, :, 1], modes[i, :, 0], "-", color=c, lw=lw, alpha=alpha, zorder=2)
         if with_colorbar and fig is not None:

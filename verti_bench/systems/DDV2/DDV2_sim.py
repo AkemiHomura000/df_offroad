@@ -427,9 +427,9 @@ class DDV2Sim:
                                 if self._infer_ms_hist
                                 else float("nan")
                             )
-                            from verti_bench.systems.DDV2.ddv2_live_viz import parse_driving_command
+                            from verti_bench.systems.DDV2.ddv2_live_viz import parse_nav_status
 
-                            _ci, cmd_name, _cv = parse_driving_command(obs["status_feature"])
+                            _mode, nav_label, _nav = parse_nav_status(obs["status_feature"])
                             te = self.planner.last_traj[-1] if self.planner.last_traj is not None else None
                             # NAVSIM: y>0 left, y<0 right — flag cmd/traj disagreement
                             side = "?"
@@ -442,7 +442,7 @@ class DDV2Sim:
                                     side = "trajSTRAIGHT"
                             if self.ddv2_verbose:
                                 print(
-                                    f"[ddv2] t={time:.2f}s  cmd={cmd_name}  {side}  "
+                                    f"[ddv2] t={time:.2f}s  {nav_label}  {side}  "
                                     f"GPU={infer_ms:.1f}ms RTT={rtt_ms:.1f}ms "
                                     f"(μ_GPU={mean_ms:.1f} n={len(self._infer_ms_hist)})  "
                                     f"ego_end=({te[0]:.1f},{te[1]:.1f})  "

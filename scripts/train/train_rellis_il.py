@@ -135,7 +135,7 @@ def load_plan_anchors(path: Path) -> torch.Tensor:
 
 
 def build_model(
-    ckpt: Path,
+    ckpt: Path | None,
     device: torch.device,
     anchor_keep: float,
     plan_anchor_path: Path,
@@ -147,20 +147,25 @@ def build_model(
     # replace loss computer (official + optional anchor keep)
     model._trajectory_head.loss_computer = LossComputerOfficial(cfg, anchor_keep_weight=anchor_keep)
 
-    state = torch.load(ckpt, map_location="cpu")
-    if isinstance(state, dict) and "model_state_dict" in state:
-        sd = state["model_state_dict"]
-    elif isinstance(state, dict) and "state_dict" in state:
-        sd = state["state_dict"]
+    scratch = ckpt is None or str(ckpt) in ("", "none", "None")
+    if scratch:
+        # ImageNet via bkb_path for image ResNet; lidar / TF / traj head stay random.
+        print("[ckpt] from-scratch (no DiffusionDrive / NAVSIM weights)")
     else:
-        sd = state
-    sd = {k.replace("agent.", "").replace("_transfuser_model.", ""): v for k, v in sd.items()}
-    missing, unexpected = model.load_state_dict(sd, strict=False)
-    # ckpt always carries NAVSIM (or prior) plan_anchor; force the requested bank.
+        state = torch.load(ckpt, map_location="cpu")
+        if isinstance(state, dict) and "model_state_dict" in state:
+            sd = state["model_state_dict"]
+        elif isinstance(state, dict) and "state_dict" in state:
+            sd = state["state_dict"]
+        else:
+            sd = state
+        sd = {k.replace("agent.", "").replace("_transfuser_model.", ""): v for k, v in sd.items()}
+        missing, unexpected = model.load_state_dict(sd, strict=False)
+        print(f"[ckpt] {ckpt}: missing={len(missing)} unexpected={len(unexpected)}")
+    # Always force the requested plan_anchor bank (ckpt or random init both get this).
     anchors = load_plan_anchors(plan_anchor_path)
     with torch.no_grad():
         model._trajectory_head.plan_anchor.copy_(anchors)
-    print(f"[ckpt] {ckpt}: missing={len(missing)} unexpected={len(unexpected)}")
     print(f"[anchor] forced from {plan_anchor_path} shape={tuple(anchors.shape)}")
     print(
         f"[loss] trajectory_weight={cfg.trajectory_weight} "
@@ -280,7 +285,12 @@ def save_val_viz(model, files, device, out_dir: Path, epoch: int, tag: str) -> N
 def main():
     ap = argparse.ArgumentParser(description="Official-style DiffusionDrive IL on RELLIS")
     ap.add_argument("--data_dir", type=Path, default=ROOT / "datasets/ddv2_rellis_full")
-    ap.add_argument("--ckpt", type=Path, default=DDV2 / "ckpts/diffusiondrive_navsim_88p1_PDMS")
+    ap.add_argument(
+        "--ckpt",
+        type=str,
+        default=str(DDV2 / "ckpts/diffusiondrive_navsim_88p1_PDMS"),
+        help="IL init weights, or 'none' for from-scratch (ImageNet image backbone only)",
+    )
     ap.add_argument("--out_dir", type=Path, default=ROOT / "log/rellis_il_finetune_v2")
     # official IL: lr=6e-4, epochs=100, warmup=3; finetune defaults are milder
     ap.add_argument("--epochs", type=int, default=20)
@@ -302,7 +312,13 @@ def main():
     ap.add_argument("--viz_every", type=int, default=2)
     ap.add_argument("--val_batches", type=int, default=20)
     ap.add_argument("--max_train_steps", type=int, default=0)
-    ap.add_argument("--grad_clip", type=float, default=0.0, help="official default 0")
+    ap.add_argument("--grad_clip", type=float, default=0.0, help="official default 0; use 1.0 if from-scratch unstable")
+    ap.add_argument(
+        "--nan_abort_after",
+        type=int,
+        default=50,
+        help="abort epoch/training after this many consecutive non-finite losses (0=never)",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
         "--resume",
@@ -344,7 +360,13 @@ def main():
             raise SystemExit(f"--resume not found: {resume_path}")
 
     # Init weights from official/--ckpt unless resuming (resume loads full training state below).
-    init_ckpt = resume_path if resume_path is not None else args.ckpt
+    # --ckpt none → from-scratch (no NAVSIM DDV2 weights).
+    if resume_path is not None:
+        init_ckpt: Path | None = resume_path
+    elif str(args.ckpt) in ("", "none", "None"):
+        init_ckpt = None
+    else:
+        init_ckpt = Path(args.ckpt)
     model, cfg = build_model(init_ckpt, device, args.anchor_keep, args.plan_anchor_path)
     model.train()
     opt = build_optimizer(model, args.lr, args.weight_decay)
@@ -417,11 +439,14 @@ def main():
         save_val_viz(model, viz_files, device, args.out_dir / "viz", 0, "pretrained")
 
     traj_w = float(cfg.trajectory_weight)
+    nan_streak = 0
 
     for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         t0 = time.time()
         losses = []
+        nan_in_epoch = 0
+        aborted_nan = False
         for bi, batch in enumerate(train_loader):
             feats = {
                 "camera_feature": batch["camera_feature"].to(device, non_blocking=True),
@@ -437,9 +462,19 @@ def main():
                 loss = traj_w * out["trajectory_loss"]
 
             if not torch.isfinite(loss):
-                print(f"[warn] non-finite loss at step {global_step}, skip")
+                nan_streak += 1
+                nan_in_epoch += 1
+                print(f"[warn] non-finite loss at step {global_step} (streak={nan_streak}), skip")
+                if args.nan_abort_after > 0 and nan_streak >= args.nan_abort_after:
+                    print(
+                        f"[abort] {nan_streak} consecutive non-finite losses — "
+                        f"stop training (best ADE={best_ade:.4f} kept)"
+                    )
+                    aborted_nan = True
+                    break
                 continue
 
+            nan_streak = 0
             scaler.scale(loss).backward()
             if args.grad_clip > 0:
                 scaler.unscale_(opt)
@@ -463,6 +498,9 @@ def main():
             if args.max_train_steps and (bi + 1) >= args.max_train_steps:
                 break
 
+        if aborted_nan:
+            break
+
         sched.step()
         ep_loss = float(np.mean(losses)) if losses else float("nan")
         lr = float(opt.param_groups[0]["lr"])
@@ -472,9 +510,19 @@ def main():
         writer.add_scalar("train/loss_epoch", ep_loss, epoch)
         writer.add_scalar("train/lr", lr, epoch)
 
-        row = {"epoch": epoch, "train_loss": ep_loss, "lr": lr, "sec": time.time() - t0}
+        row = {
+            "epoch": epoch,
+            "train_loss": ep_loss,
+            "lr": lr,
+            "sec": time.time() - t0,
+            "nan_skips": nan_in_epoch,
+        }
 
-        if args.val_every > 0 and epoch % args.val_every == 0:
+        diverged = (not np.isfinite(ep_loss)) or (
+            len(losses) > 0 and nan_in_epoch > max(10, len(train_loader) // 5)
+        )
+
+        if args.val_every > 0 and epoch % args.val_every == 0 and not diverged:
             print(f"[val] epoch {epoch} ...")
             m = eval_metrics(model, val_loader, device, max_batches=args.val_batches)
             history["epoch_val_ade"].append(m["ade"])
@@ -488,7 +536,7 @@ def main():
                 f"  train_loss={ep_loss:.4f} ADE={m['ade']:.3f} FDE={m['fde']:.3f} "
                 f"minADE@20={m['min_ade20']:.3f} lr={lr:.2e} ({row['sec']:.0f}s)"
             )
-            if m["ade"] < best_ade:
+            if np.isfinite(m["ade"]) and m["ade"] < best_ade:
                 best_ade = m["ade"]
                 sd = {f"agent._transfuser_model.{k}": v.cpu() for k, v in model.state_dict().items()}
                 torch.save(
@@ -502,33 +550,46 @@ def main():
                     args.out_dir / "ckpts" / "best.ckpt",
                 )
                 print(f"  [best] ADE={best_ade:.3f}")
+            if not np.isfinite(m["ade"]):
+                diverged = True
         else:
             history["epoch_val_ade"].append(float("nan"))
             history["epoch_val_fde"].append(float("nan"))
             history["epoch_val_minade"].append(float("nan"))
+            if diverged:
+                print(
+                    f"[abort] epoch {epoch} diverged "
+                    f"(train_loss={ep_loss}, nan_skips={nan_in_epoch}) — keep best ADE={best_ade:.4f}"
+                )
 
         with open(metrics_path, "a") as f:
             f.write(json.dumps(row) + "\n")
         plot_curves(history, args.out_dir / "curves.png")
         writer.flush()
-        torch.save(
-            {
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": opt.state_dict(),
-                "scheduler_state_dict": sched.state_dict(),
-                "scaler_state_dict": scaler.state_dict() if scaler.is_enabled() else None,
-                "global_step": global_step,
-                "ade": row.get("ade", best_ade),
-                "best_ade": best_ade,
-                "history": history,
-                "args": {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
-            },
-            args.out_dir / "ckpts" / "last.ckpt",
-        )
-        if args.viz_every > 0 and epoch % args.viz_every == 0:
-            print(f"[viz] epoch {epoch} ...")
-            save_val_viz(model, viz_files, device, args.out_dir / "viz", epoch, "finetune")
+        if not diverged:
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": opt.state_dict(),
+                    "scheduler_state_dict": sched.state_dict(),
+                    "scaler_state_dict": scaler.state_dict() if scaler.is_enabled() else None,
+                    "global_step": global_step,
+                    "ade": row.get("ade", best_ade),
+                    "best_ade": best_ade,
+                    "history": history,
+                    "args": {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
+                },
+                args.out_dir / "ckpts" / "last.ckpt",
+            )
+            if args.viz_every > 0 and epoch % args.viz_every == 0:
+                print(f"[viz] epoch {epoch} ...")
+                try:
+                    save_val_viz(model, viz_files, device, args.out_dir / "viz", epoch, "finetune")
+                except Exception as e:
+                    print(f"[warn] viz failed (skipped): {e}")
+        else:
+            break
 
     writer.close()
     plot_curves(history, args.out_dir / "curves.png")

@@ -14,8 +14,10 @@ Layout:
                                       cam_front uint8 (256,1024,3),
                                       lidar_density (1,256,256) count hist in [0,1],
                                       lidar_elevation (1,256,256) max-z chassis frame (empty=0),
-                                      lidar_feature (=density, DDV2 compat),
-                                      status_feature (8,), pose [x,y,z,heading], t, speed
+                                      lidar_feature (=elevation [0,1] by default; DDV2 input),
+                                      status_feature (8,)= ego-goal XY/norm in [0:2] + range in [2]
+                                        + vel/acc (scheme B; or legacy one-hot if status_nav_mode=command),
+                                      pose [x,y,z,heading], t, speed
       snapshot.png                    mid-episode cam | density | elevation collage
 
 Turn episodes into DDV2 training samples with build_verti_ddv2_dataset.py.
@@ -348,6 +350,8 @@ class SensorRecorder:
         p = body.GetPos()
         dens = obs['lidar_density'].astype(np.float32)
         elev = obs['lidar_elevation'].astype(np.float32)
+        # Prefer suite lidar_feature (elevation-normalized by default on this branch)
+        lid = np.asarray(obs.get('lidar_feature', dens), dtype=np.float32)
         path = os.path.join(self.dir, f'obs_{self.n:05d}.npz')
         with open(path + '.tmp', 'wb') as f:
             np.savez_compressed(
@@ -355,7 +359,7 @@ class SensorRecorder:
                 cam_front=obs['cam_front'].astype(np.uint8),
                 lidar_density=dens,
                 lidar_elevation=elev,
-                lidar_feature=dens,  # DDV2 / legacy alias
+                lidar_feature=lid,
                 status_feature=obs['status_feature'].astype(np.float32),
                 pose=np.array([p.x, p.y, p.z, chassis_heading(body)], dtype=np.float64),
                 t=np.float64(t),

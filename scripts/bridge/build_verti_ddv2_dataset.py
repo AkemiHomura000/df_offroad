@@ -1,17 +1,21 @@
 """Convert collect_expert_verti.py episodes into DDV2 training samples.
 
 Can emit one or both lidar variants (same frames / same train–val split):
+  --lidar_mode elevation   → lidar_feature = chassis-frame max-z BEV, mapped to [0,1] (default)
   --lidar_mode density     → lidar_feature = point-count BEV in [0,1]
-  --lidar_mode elevation   → lidar_feature = chassis-frame max-z BEV, mapped to [0,1]
-  --lidar_mode both        → write two out dirs in one pass (recommended)
+  --lidar_mode both        → write two out dirs in one pass
 
 Output layout (matches RELLIS / train_rellis_il.py):
   OUT/{train,val}/sample_XXXXXX.npz
       camera_feature (3,256,1024) f32
       lidar_feature  (1,256,256) f32
-      status_feature (8,) f32
+      status_feature (8,) f32   # default: ego goal XY in [0:2] (scheme B) + vel/acc
       trajectory     (8,3) f32  ego-frame x,y,yaw at 0.5..4.0 s
   OUT/meta.json
+
+By default ``--status_nav goal`` rewrites status[0:4] from episode goal
+(meta.json / traj.csv) into ego-frame XY / --goal_norm_m (clipped [-1,1]).
+Use ``--status_nav command`` to keep the one-hot stored in expert obs.
 
 Example:
   python build_verti_ddv2_dataset.py --src log/verti_expert --lidar_mode both \\
@@ -24,10 +28,32 @@ import glob
 import json
 import os
 import shutil
+import sys
 
 import numpy as np
 
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from verti_bench.envs.utils.ddv2_status import (  # noqa: E402
+    GOAL_NORM_M,
+    rewrite_status_nav_goal,
+)
+
 H_STEPS, H_DT = 8, 0.5
+
+
+def episode_goal_xy(meta, traj_path):
+    """World-frame goal XY from meta.json or first traj.csv row."""
+    g = meta.get("goal")
+    if isinstance(g, (list, tuple)) and len(g) >= 2:
+        return float(g[0]), float(g[1])
+    with open(traj_path) as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        raise KeyError("no goal in meta and empty traj.csv")
+    return float(rows[0]["goal_x"]), float(rows[0]["goal_y"])
 
 
 def wrap(a):
@@ -114,16 +140,28 @@ def save_sample(out_root, split, sid, cam, lidar, status, traj, name, fidx, meta
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--src', default='/home/rm/Desktop/df_offroad/log/verti_expert')
-    ap.add_argument('--lidar_mode', choices=['density', 'elevation', 'both'], default='both')
+    ap.add_argument('--lidar_mode', choices=['density', 'elevation', 'both'], default='elevation')
     ap.add_argument('--out', default='', help='single-mode output dir')
     ap.add_argument('--out_density', default='/home/rm/Desktop/df_offroad/datasets/verti_ddv2_density')
     ap.add_argument('--out_elevation', default='/home/rm/Desktop/df_offroad/datasets/verti_ddv2_elevation')
-    ap.add_argument('--status', default='success,fail,interrupted')
+    ap.add_argument('--status', default='success')
     ap.add_argument('--min_t', type=float, default=1.0)
     ap.add_argument('--min_progress', type=float, default=0.5)
     ap.add_argument('--val_every', type=int, default=10)
     ap.add_argument('--elev_min', type=float, default=-3.0, help='chassis-z low for [0,1] map')
     ap.add_argument('--elev_max', type=float, default=4.0, help='chassis-z high for [0,1] map')
+    ap.add_argument(
+        '--status_nav',
+        choices=['goal', 'command'],
+        default='goal',
+        help='goal: rewrite status[0:4] as ego XY/norm (scheme B); command: keep obs one-hot',
+    )
+    ap.add_argument(
+        '--goal_norm_m',
+        type=float,
+        default=GOAL_NORM_M,
+        help='ego goal XY ÷ this, then clip to [-1,1] (default=BEV 32 m)',
+    )
     args = ap.parse_args()
 
     keep = set(s.strip() for s in args.status.split(',') if s.strip())
@@ -140,7 +178,7 @@ def main():
 
     samples = {m: [] for m, _ in modes}
     sid = 0
-    stats = dict(episodes=0, skipped_eps=0, obs=0, no_future=0, stuck=0, no_elev=0)
+    stats = dict(episodes=0, skipped_eps=0, obs=0, no_future=0, stuck=0, no_elev=0, no_goal=0)
     # Split by kept-episode order so train/val membership is identical for both outs.
     kept_ei = 0
     ep_dirs = sorted(glob.glob(os.path.join(args.src, 'ep_*')))
@@ -160,6 +198,14 @@ def main():
         if len(t) < 2:
             stats['skipped_eps'] += 1
             continue
+        goal_xy = None
+        if args.status_nav == 'goal':
+            try:
+                goal_xy = episode_goal_xy(meta, traj_path)
+            except (KeyError, ValueError, OSError):
+                stats['no_goal'] += 1
+                stats['skipped_eps'] += 1
+                continue
 
         split = 'val' if kept_ei % args.val_every == args.val_every - 1 else 'train'
         kept_ei += 1
@@ -194,6 +240,10 @@ def main():
 
             cam = np.transpose(d['cam_front'].astype(np.float32) / 255.0, (2, 0, 1))
             status = np.asarray(d['status_feature'], dtype=np.float32)
+            if args.status_nav == 'goal':
+                status = rewrite_status_nav_goal(
+                    status, d['pose'], goal_xy, goal_norm_m=args.goal_norm_m
+                )
             fidx = int(os.path.basename(of)[4:9])
             for mode, out_root in modes:
                 samples[mode].append(
@@ -207,6 +257,8 @@ def main():
         out_meta = dict(
             source=os.path.abspath(args.src),
             lidar_mode=mode,
+            status_nav=args.status_nav,
+            goal_norm_m=args.goal_norm_m if args.status_nav == 'goal' else None,
             elev_min=args.elev_min if mode == 'elevation' else None,
             elev_max=args.elev_max if mode == 'elevation' else None,
             horizon_s=H_STEPS * H_DT,

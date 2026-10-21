@@ -40,9 +40,37 @@ CMD_COLORS = (
     (160, 160, 160),  # unknown — gray
 )
 
+_GOAL_NORM_M_DEFAULT = 32.0
+
+
+def status_is_goal_nav(status: np.ndarray) -> bool:
+    """True if status[0:4] looks like scheme-B goal (not a discrete one-hot)."""
+    st = np.asarray(status, dtype=np.float64).reshape(-1)
+    if st.size < 4:
+        return False
+    nav = st[:4]
+    # Classic one-hot: one entry ≈1, others ≈0, sum ≈1
+    if (
+        abs(float(nav.sum()) - 1.0) < 0.08
+        and abs(float(nav.max()) - 1.0) < 0.08
+        and int(np.sum(np.abs(nav) < 0.08)) >= 3
+    ):
+        return False
+    # Goal encoding: [3]≈0 and (signed xy or positive range in [2])
+    if abs(float(nav[3])) > 0.08:
+        return False
+    if float(nav[2]) > 0.02:
+        return True
+    if float(np.min(nav[:2])) < -0.02:
+        return True
+    return float(np.linalg.norm(nav[:2])) > 0.02
+
 
 def parse_driving_command(status: np.ndarray) -> Tuple[int, str, np.ndarray]:
-    """status (8,) = cmd(4)+vel(2)+acc(2) → active index, label, cmd vector."""
+    """Legacy helper: status (8,) → active one-hot index/label/vector.
+
+    Prefer ``parse_nav_status`` when status may carry ego-goal XY (scheme B).
+    """
     st = np.asarray(status, dtype=np.float64).reshape(-1)
     cmd = st[:4] if st.size >= 4 else np.zeros(4)
     if float(cmd.sum()) < 1e-6:
@@ -52,38 +80,84 @@ def parse_driving_command(status: np.ndarray) -> Tuple[int, str, np.ndarray]:
     return idx, CMD_LABELS[idx], cmd.astype(np.float32)
 
 
-def _draw_cmd_banner(width: int, cmd_idx: int, cmd_vec: np.ndarray, vel_xy: np.ndarray, height: int = 56) -> np.ndarray:
-    """Wide strip with 4 command chips; active one filled."""
+def parse_nav_status(
+    status: np.ndarray, goal_norm_m: float = _GOAL_NORM_M_DEFAULT
+) -> Tuple[str, str, np.ndarray]:
+    """Return (mode, label, nav4). mode is 'goal' or 'command'."""
+    st = np.asarray(status, dtype=np.float64).reshape(-1)
+    nav = (st[:4] if st.size >= 4 else np.zeros(4)).astype(np.float32)
+    if status_is_goal_nav(st):
+        gx, gy = float(nav[0]) * goal_norm_m, float(nav[1]) * goal_norm_m
+        return "goal", f"GOAL ego=({gx:+.1f},{gy:+.1f})m", nav
+    _idx, name, _vec = parse_driving_command(st)
+    return "command", f"CMD: {name}", nav
+
+
+def _draw_nav_banner(
+    width: int,
+    status: np.ndarray,
+    vel_xy: np.ndarray,
+    height: int = 56,
+    goal_norm_m: float = _GOAL_NORM_M_DEFAULT,
+) -> np.ndarray:
+    """Top strip: ego-goal (scheme B) or legacy command chips."""
     bar = np.full((height, width, 3), 22, dtype=np.uint8)
-    _put_text(bar, "NAV CMD", (10, 36), 0.65, (200, 200, 200), 2)
-    n = 4
-    left0 = 120
-    gap = 10
-    chip_w = max(80, (width - left0 - 20 - gap * (n - 1)) // n)
-    for i, (lab, col) in enumerate(zip(CMD_LABELS, CMD_COLORS)):
-        x0 = left0 + i * (chip_w + gap)
-        x1 = x0 + chip_w
-        y0, y1 = 8, height - 8
-        active = i == cmd_idx
-        if active:
-            cv2.rectangle(bar, (x0, y0), (x1, y1), col, -1, cv2.LINE_AA)
-            text_col = (10, 10, 10)
-        else:
-            cv2.rectangle(bar, (x0, y0), (x1, y1), (70, 70, 70), 2, cv2.LINE_AA)
-            text_col = (180, 180, 180)
-        # soft fill by cmd weight
-        w = float(cmd_vec[i]) if i < len(cmd_vec) else 0.0
-        if not active and w > 0.05:
-            overlay = bar.copy()
-            cv2.rectangle(overlay, (x0, y0), (x1, y1), col, -1, cv2.LINE_AA)
-            bar = cv2.addWeighted(overlay, 0.25 * w, bar, 1 - 0.25 * w, 0)
-        tx = x0 + 12
-        _put_text(bar, lab, (tx, 36), 0.55, text_col, 2 if active else 1)
-    # ego speed from status
+    mode, label, nav = parse_nav_status(status, goal_norm_m=goal_norm_m)
+    if mode == "goal":
+        _put_text(bar, "NAV GOAL", (10, 36), 0.65, (200, 200, 200), 2)
+        cv2.rectangle(bar, (130, 8), (130 + 420, height - 8), (60, 160, 255), -1, cv2.LINE_AA)
+        _put_text(bar, label, (140, 36), 0.6, (15, 15, 15), 2)
+        # mini ego→goal arrow sketch
+        gx, gy = float(nav[0]), float(nav[1])
+        cx, cy = width - 80, height // 2
+        cv2.circle(bar, (cx, cy), 18, (70, 70, 70), 1, cv2.LINE_AA)
+        cv2.arrowedLine(
+            bar,
+            (cx, cy),
+            (int(cx - gy * 16), int(cy - gx * 16)),  # +x up, +y left on banner
+            (80, 220, 255),
+            2,
+            tipLength=0.35,
+        )
+    else:
+        cmd_idx = int(np.argmax(nav)) if float(np.sum(np.abs(nav))) > 1e-6 else 3
+        _put_text(bar, "NAV CMD", (10, 36), 0.65, (200, 200, 200), 2)
+        n = 4
+        left0 = 120
+        gap = 10
+        chip_w = max(80, (width - left0 - 20 - gap * (n - 1)) // n)
+        for i, (lab, col) in enumerate(zip(CMD_LABELS, CMD_COLORS)):
+            x0 = left0 + i * (chip_w + gap)
+            x1 = x0 + chip_w
+            y0, y1 = 8, height - 8
+            active = i == cmd_idx
+            if active:
+                cv2.rectangle(bar, (x0, y0), (x1, y1), col, -1, cv2.LINE_AA)
+                text_col = (10, 10, 10)
+            else:
+                cv2.rectangle(bar, (x0, y0), (x1, y1), (70, 70, 70), 2, cv2.LINE_AA)
+                text_col = (180, 180, 180)
+            tx = x0 + 12
+            _put_text(bar, lab, (tx, 36), 0.55, text_col, 2 if active else 1)
     if vel_xy is not None and len(vel_xy) >= 2:
         spd = float(np.linalg.norm(vel_xy[:2]))
-        _put_text(bar, f"|v|={spd:.2f} m/s  vx={vel_xy[0]:+.2f} vy={vel_xy[1]:+.2f}", (width - 360, 36), 0.5, (200, 220, 255))
+        _put_text(
+            bar,
+            f"|v|={spd:.2f} m/s  vx={vel_xy[0]:+.2f} vy={vel_xy[1]:+.2f}",
+            (width - 360, 36),
+            0.5,
+            (200, 220, 255),
+        )
     return bar
+
+
+# Back-compat name
+def _draw_cmd_banner(width: int, cmd_idx: int, cmd_vec: np.ndarray, vel_xy: np.ndarray, height: int = 56) -> np.ndarray:
+    st = np.zeros(8, dtype=np.float32)
+    st[:4] = np.asarray(cmd_vec, dtype=np.float32).reshape(4)
+    if vel_xy is not None:
+        st[4:6] = np.asarray(vel_xy, dtype=np.float32).reshape(2)
+    return _draw_nav_banner(width, st, vel_xy, height=height)
 
 
 def _compose_panel(
@@ -100,8 +174,11 @@ def _compose_panel(
     panel_h: int = 360,
 ) -> np.ndarray:
     status = np.asarray(obs.get("status_feature", np.zeros(8)), dtype=np.float32).reshape(-1)
-    cmd_idx, cmd_name, cmd_vec = parse_driving_command(status)
+    nav_mode, nav_label, nav4 = parse_nav_status(status)
     vel_xy = status[4:6] if status.size >= 6 else np.zeros(2, dtype=np.float32)
+    goal_ego = None
+    if nav_mode == "goal":
+        goal_ego = nav4[:2] * _GOAL_NORM_M_DEFAULT
 
     cam = np.asarray(obs["camera_feature"])
     if cam.ndim == 3 and cam.shape[0] == 3:
@@ -111,10 +188,9 @@ def _compose_panel(
     cam_w = int(round(h * cam.shape[1] / max(cam.shape[0], 1)))
     cam_bgr = cv2.cvtColor(cv2.resize(cam, (cam_w, h)), cv2.COLOR_RGB2BGR)
     _put_text(cam_bgr, "camera", (8, 22), 0.55)
-    # big command badge on camera
-    badge = CMD_COLORS[cmd_idx]
-    cv2.rectangle(cam_bgr, (8, 40), (8 + 200, 88), badge, -1, cv2.LINE_AA)
-    _put_text(cam_bgr, f"CMD: {cmd_name}", (16, 72), 0.75, (15, 15, 15), 2)
+    badge = (60, 160, 255) if nav_mode == "goal" else CMD_COLORS[int(np.argmax(nav4))]
+    cv2.rectangle(cam_bgr, (8, 40), (8 + 280, 88), badge, -1, cv2.LINE_AA)
+    _put_text(cam_bgr, nav_label[:28], (16, 72), 0.55, (15, 15, 15), 2)
     lid = np.asarray(obs["lidar_feature"])
     if lid.ndim == 3:
         lid = lid[0]
@@ -136,9 +212,15 @@ def _compose_panel(
     for p in pts:
         cv2.circle(bev, p, 3, (255, 180, 0), -1, cv2.LINE_AA)
     cv2.drawMarker(bev, xy_to_px(0, 0, h, e), (0, 0, 255), cv2.MARKER_CROSS, 16, 2)
+    if goal_ego is not None:
+        gpx = xy_to_px(float(goal_ego[0]), float(goal_ego[1]), h, e)
+        cv2.drawMarker(bev, gpx, (80, 220, 255), cv2.MARKER_TRIANGLE_UP, 18, 2)
+        cv2.line(bev, xy_to_px(0, 0, h, e), gpx, (80, 220, 255), 1, cv2.LINE_AA)
     _put_text(bev, "BEV +x up +y left", (8, 22), 0.55)
 
     span = max(float(np.max(np.abs(traj[:, :2]))), 1.0) * 1.2
+    if goal_ego is not None:
+        span = max(span, float(np.max(np.abs(goal_ego))) * 1.2, 1.0)
     ego = np.full((h, h, 3), 25, dtype=np.uint8)
     epts = [xy_to_px(float(x), float(y), h, span) for x, y, *_ in traj]
     for i in range(1, len(epts)):
@@ -146,11 +228,14 @@ def _compose_panel(
     for p in epts:
         cv2.circle(ego, p, 4, (255, 180, 0), -1, cv2.LINE_AA)
     cv2.drawMarker(ego, xy_to_px(0, 0, h, span), (0, 0, 255), cv2.MARKER_CROSS, 18, 2)
+    if goal_ego is not None:
+        gpx = xy_to_px(float(goal_ego[0]), float(goal_ego[1]), h, span)
+        cv2.drawMarker(ego, gpx, (80, 220, 255), cv2.MARKER_TRIANGLE_UP, 18, 2)
     _put_text(ego, "ego +x up +y left", (8, 22), 0.55)
     _put_text(ego, f"GPU {infer_ms:.0f}ms  RTT {rtt_ms:.0f}ms", (8, h - 12), 0.5, (180, 255, 180))
 
     top = np.concatenate([cam_bgr, bev, ego], axis=1)
-    cmd_bar = _draw_cmd_banner(top.shape[1], cmd_idx, cmd_vec, vel_xy)
+    cmd_bar = _draw_nav_banner(top.shape[1], status, vel_xy)
     th = 140
     timing = np.full((th, top.shape[1], 3), 30, dtype=np.uint8)
     def draw_series(hist, color, label, y0):
@@ -171,7 +256,7 @@ def _compose_panel(
     _put_text(
         timing,
         f"n={n_infer}  GPU={infer_ms:.0f}(u={mean_i:.0f})  RTT={rtt_ms:.0f}(u={mean_r:.0f})  "
-        f"t={sim_t:.1f}s v~{track_speed:.2f}  cmd={cmd_name}",
+        f"t={sim_t:.1f}s v~{track_speed:.2f}  {nav_label}",
         (12, th - 12),
         0.5,
         (220, 220, 220),

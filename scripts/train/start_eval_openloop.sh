@@ -8,11 +8,11 @@ cd "$ROOT"
 source "$ROOT/ddv2_env.sh"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
-OUT="${OUT:-$ROOT/log/openloop_eval}"
+OUT="${OUT:-$ROOT/log/openloop_eval_elevation}"
 mkdir -p "$OUT"
 export OUT \
-  CKPT="${CKPT:-$ROOT/log/verti_il_finetune_v3_density/ckpts/best.ckpt}" \
-  DATA_DIR="${DATA_DIR:-$ROOT/datasets/verti_ddv2_density}" \
+  CKPT="${CKPT:-$ROOT/log/verti_il_finetune_elevation/ckpts/best.ckpt}" \
+  DATA_DIR="${DATA_DIR:-$ROOT/datasets/verti_ddv2_elevation}" \
   BASELINE="${BASELINE:-$ROOT/DiffusionDriveV2/ckpts/diffusiondrive_navsim_88p1_PDMS}" \
   SPLIT="${SPLIT:-val}" \
   VIZ_K="${VIZ_K:-4}"

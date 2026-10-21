@@ -10,11 +10,14 @@
 #     OUT=log/verti_ddv2_eval_replay bash scripts/bridge/run_eval_verti_ddv2_batch.sh
 set -eo pipefail
 ROOT=/home/rm/Desktop/df_offroad
-CKPT="${CKPT:-$ROOT/log/verti_il_finetune_v3_density/ckpts/best.ckpt}"
+CKPT="${CKPT:-$ROOT/log/verti_il_finetune_elevation/ckpts/best.ckpt}"
+if [[ ! -f "$CKPT" ]]; then
+  CKPT="$ROOT/log/verti_il_finetune_v3_density/ckpts/best.ckpt"
+fi
 PLAN_ANCHOR="${PLAN_ANCHOR:-$ROOT/DiffusionDriveV2/kmeans_verti_traj_20.npy}"
 HOST="${DDV2_HOST:-127.0.0.1}"
 PORT="${DDV2_PORT:-8765}"
-OUT="${OUT:-$ROOT/log/verti_ddv2_eval_v3_density}"
+OUT="${OUT:-$ROOT/log/verti_ddv2_eval_elevation}"
 WORLDS="${WORLDS:-low}"
 TASKS="${TASKS:-3}"
 GOAL_MODE="${GOAL_MODE:-yaml}"

@@ -153,6 +153,10 @@ def render_episode(ep_dir, out_dir, fps, dpi, max_frames):
     ff = subprocess.Popen(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba',
                            '-s', f'{w}x{h}', '-r', str(fps), '-i', '-', '-pix_fmt', 'yuv420p',
                            '-vcodec', 'libx264', '-crf', '23', out], stdin=subprocess.PIPE)
+    try:
+        from verti_bench.systems.DDV2.ddv2_live_viz import parse_nav_status
+    except ImportError:
+        parse_nav_status = None
     cmd_names = ['LEFT', 'STRAIGHT', 'RIGHT', 'UNKNOWN']
     for of in obs_files:
         d = np.load(of)
@@ -174,9 +178,14 @@ def render_episode(ep_dir, out_dir, fps, dpi, max_frames):
         cur_c.set_xdata([t0, t0])
         st = d['status_feature']
         dist = np.hypot(goal[0] - pose[0], goal[1] - pose[1])
+        if parse_nav_status is not None:
+            _mode, nav_lab, _ = parse_nav_status(st)
+            nav_txt = nav_lab
+        else:
+            nav_txt = f'cmd={cmd_names[int(np.argmax(st[:4]))]}'
         title.set_text(f'{name}   system={meta["system"]}   status={meta.get("status")}   '
                        f't={t0:5.1f}s   v={float(d["speed"]):4.2f} m/s   '
-                       f'cmd={cmd_names[int(np.argmax(st[:4]))]}   dist_goal={dist:5.1f} m')
+                       f'{nav_txt}   dist_goal={dist:5.1f} m')
         fig.canvas.draw()
         ff.stdin.write(fig.canvas.buffer_rgba().tobytes())
     ff.stdin.close()

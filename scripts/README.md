@@ -2,11 +2,18 @@
 
 项目脚本入口。先 `source ddv2_env.sh`（训练/推理）或 `source verti_bench_env.sh`（Chrono 仿真）。
 
-推荐流水线（Verti）：
+推荐流水线（Verti，当前分支 `exp/lidar-elevation-bev`）：
 
 ```
-采集专家 → 建 dens 数据集 → IL 微调 →（可选 GRPO）→ 开环评测 / 闭环批量评测
+采集专家 → 建 elevation 数据集 → IL 微调 →（可选 GRPO）→ 开环评测 / 闭环批量评测
 ```
+
+本分支默认将 DDV2 的 `lidar_feature` 从点云**密度** BEV 换成**高程** BEV（`[-3,4]` m → `[0,1]`）。
+回退密度：传感器设 `lidar_bev_mode="density"`，训练用 `DATA_DIR=datasets/verti_ddv2_density`。
+
+`status_feature` 默认方案 B：自车系目标点编码进前 4 维（`gx,gy,‖g‖ / 32`），替代 L/S/R/U one-hot。
+重写已有数据集 status（不重采）：
+`python scripts/bridge/rewrite_verti_status_goal.py --data_dir datasets/verti_ddv2_elevation --src log/verti_expert`
 
 ---
 
@@ -26,7 +33,7 @@
 
 | 脚本 | 作用 |
 |------|------|
-| `start_finetune_verti.sh` | nohup 启动 Verti dens IL 微调（默认 10 ep） |
+| `start_finetune_verti.sh` | nohup 启动 Verti elevation IL 微调（默认 10 ep） |
 | `start_finetune_rellis.sh` | nohup 启动 RELLIS IL 微调 |
 | `start_verti_grpo.sh` | nohup 启动 VertiPDM-GRPO |
 | `start_eval_openloop.sh` | nohup 开环 ADE/FDE 评测（可对比 baseline） |
@@ -73,7 +80,8 @@ WORLDS=all TASKS=1 OUT=log/verti_ddv2_eval_100 \
 | 文件 | 作用 |
 |------|------|
 | `collect_expert_verti.py` | 专家采集核心逻辑 |
-| `build_verti_ddv2_dataset.py` | 专家 ep → dens/elevation 训练样本（`--status success`） |
+| `build_verti_ddv2_dataset.py` | 专家 ep → dens/elevation 训练样本（默认 `--status_nav goal`） |
+| `rewrite_verti_status_goal.py` | 已有数据集 status 重写为 ego 目标点（方案 B，不重采） |
 | `build_verti_metric_cache.py` | 为 GRPO 建 VertiMetricCache |
 | `verti_metric_cache.py` / `verti_pdm_scorer.py` | 越野 metric / VertiPDM 打分 |
 | `ddv2_plan_server.py` / `ddv2_plan_client.py` / `ddv2_plan_protocol.py` | 闭环规划 TCP 服务 |

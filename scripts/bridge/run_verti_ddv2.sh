@@ -3,7 +3,12 @@
 # Starts plan server (ddv2 env) then sim (chrono9). Ctrl+C stops both.
 set -eo pipefail
 ROOT=/home/rm/Desktop/df_offroad
-CKPT="${CKPT:-$ROOT/log/verti_il_finetune_v3_density/ckpts/best.ckpt}"
+# Prefer elevation-FT ckpt on exp/lidar-elevation-bev; fall back to dens v3 if missing.
+CKPT="${CKPT:-$ROOT/log/verti_il_finetune_elevation/ckpts/best.ckpt}"
+if [[ ! -f "$CKPT" ]]; then
+  CKPT="$ROOT/log/verti_il_finetune_v3_density/ckpts/best.ckpt"
+fi
+PLAN_ANCHOR="${PLAN_ANCHOR:-$ROOT/DiffusionDriveV2/kmeans_verti_traj_20.npy}"
 HOST="${DDV2_HOST:-127.0.0.1}"
 PORT="${DDV2_PORT:-8765}"
 WORLD="${WORLD:-5}"
@@ -26,10 +31,14 @@ trap cleanup EXIT
 echo "========== DDV2 plan server =========="
 # shellcheck disable=SC1091
 source "$ROOT/ddv2_env.sh"
-python "$ROOT/scripts/bridge/ddv2_plan_server.py" --ckpt "$CKPT" --host "$HOST" --port "$PORT" \
+python "$ROOT/scripts/bridge/ddv2_plan_server.py" \
+  --ckpt "$CKPT" \
+  --plan_anchor_path "$PLAN_ANCHOR" \
+  --host "$HOST" \
+  --port "$PORT" \
   > "$ROOT/log/ddv2_plan_server.log" 2>&1 &
 SERVER_PID=$!
-echo "server pid=$SERVER_PID  log=$ROOT/log/ddv2_plan_server.log"
+echo "server pid=$SERVER_PID  log=$ROOT/log/ddv2_plan_server.log  ckpt=$CKPT"
 
 # wait until port is open
 for i in $(seq 1 60); do
