@@ -48,9 +48,12 @@ from PIL import Image
 from scipy.ndimage import binary_dilation
 
 from verti_bench.envs.utils.ddv2_status import encode_attitude
+from verti_bench.envs.utils.ros_msg_stubs import ensure_ros_msg_stubs
 from verti_bench.envs.utils.utils import SetChronoDataDirectories
 
 ROOT = Path(__file__).resolve().parents[2]
+# MPPI/TAL/TNT need grid_map_msgs; use offline stubs when ROS is not installed.
+ensure_ros_msg_stubs()
 
 ASTAR_SYSTEMS = ['pid', 'eh', 'mppi', 'mppi6', 'tal', 'tnt', 'wmvct']
 CFG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -531,22 +534,32 @@ def run_episode(args, ep, world, system, rng):
     config = dict(vehicle=args.vehicle, speed=args.speed, system=system, world_id=world,
                   max_time=args.max_time, scale_factor=args.scale_factor, render=args.render,
                   use_gui=False)
-    sim = make_sim(system, config)
-    start, goal, src = choose_task(args, sim, rng, ep)
-
     ep_dir = os.path.join(args.out, f'ep_{ep:05d}_w{world}_{system}')
     os.makedirs(ep_dir, exist_ok=True)
-    meta = dict(episode=ep, world=world, difficulty=sim.terrain_manager.difficulty,
+    meta = dict(episode=ep, world=world, difficulty='?',
                 system=system, vehicle=args.vehicle, speed=args.speed,
                 scale_factor=args.scale_factor, max_time=args.max_time,
-                task_source=src, start=start, goal=goal, sample_hz=args.hz,
+                task_source='?', start=None, goal=None, sample_hz=args.hz,
                 status='running', wall_start=wall.time())
     write_json(os.path.join(ep_dir, 'meta.json'), meta)
-    print(f'[ep {ep}] world={world} ({meta["difficulty"]}) system={system} '
-          f'start={np.round(start[:2], 1)} goal={np.round(goal[:2], 1)} [{src}]', flush=True)
 
     rec = srec = None
+    sim = None
     try:
+        # Import / construct can fail (e.g. missing ROS msgs) — keep under try.
+        ensure_ros_msg_stubs()
+        sim = make_sim(system, config)
+        start, goal, src = choose_task(args, sim, rng, ep)
+        meta.update(
+            difficulty=sim.terrain_manager.difficulty,
+            task_source=src,
+            start=start,
+            goal=goal,
+        )
+        write_json(os.path.join(ep_dir, 'meta.json'), meta)
+        print(f'[ep {ep}] world={world} ({meta["difficulty"]}) system={system} '
+              f'start={np.round(start[:2], 1)} goal={np.round(goal[:2], 1)} [{src}]', flush=True)
+
         sim.initialize(start_pos=start, goal_pos=goal)
         if getattr(sim, 'chrono_path', None) is None:
             meta.update(status='no_path')
@@ -583,8 +596,8 @@ def run_episode(args, ep, world, system, rng):
         write_json(os.path.join(ep_dir, 'meta.json'), meta)
         append_index(args.out, {k: meta.get(k) for k in
                                 ('episode', 'world', 'system', 'status', 'time', 'n_samples', 'n_obs',
-                                 'start', 'goal', 'task_source')})
-        if args.render and getattr(sim, 'vis', None) is not None:
+                                 'start', 'goal', 'task_source', 'error')})
+        if args.render and sim is not None and getattr(sim, 'vis', None) is not None:
             try:
                 sim.vis.Quit()
             except Exception:

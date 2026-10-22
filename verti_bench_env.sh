@@ -41,6 +41,16 @@ export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 export CHRONO_DATA_DIR="${_DF_OFFROAD_ROOT}/verti_bench/envs/data/"
 export PYTHONPATH="${_DF_OFFROAD_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
 
+# Offline ROS msg stubs for MPPI/TAL/TNT when grid_map_msgs is not installed.
+# Real ROS (humble/foxy below) still wins if those packages import successfully.
+_ROS_STUBS="${_DF_OFFROAD_ROOT}/verti_bench/third_party/ros_msg_stubs"
+if [[ -d "$_ROS_STUBS" ]]; then
+  if ! python -c "import grid_map_msgs" >/dev/null 2>&1; then
+    export PYTHONPATH="${_ROS_STUBS}${PYTHONPATH:+:$PYTHONPATH}"
+    echo "[verti_bench_env] ROS msg stubs enabled (${_ROS_STUBS})"
+  fi
+fi
+
 # Source-built PyChrono (Ubuntu 20.04): prefer repo-local downloads/ over conda/pip.
 # Layout: downloads/chrono (src) + downloads/chrono_build (cmake build tree).
 # Python modules usually live in chrono_build/bin/pychrono/; some builds put *.so in bin/.

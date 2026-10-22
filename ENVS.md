@@ -25,7 +25,7 @@ Miniconda/Anaconda: `$HOME/miniconda3` 或 `$HOME/anaconda3`（见 `*_env.sh`）
   - `lidar_feature` 默认 = **高程 BEV**（底盘系 max-z ∈ `[-3,4]` m → `[0,1]`；`lidar_bev_mode="density"` 可回退点数直方图）
   - `status_feature` 默认 = **方案 B**（8 维）：`[gx,gy]/32` + `[roll,pitch]/π` + `vx,vy,ax,ay`；`status_nav_mode="command"` 可回退 L/S/R/U
   - 相机: 前视 RGB + Depth（同挂点）`1024×256`，HFOV 100°，挂点约 `(1.2,0,1.6)`，俯仰 −8°，`depth_max=40` m；LiDAR BEV ±32 m
-- MPPI/TAL/TNT 等需 `grid_map_msgs`（ROS2: `ros-humble-grid-map-msgs`；ROS1/20.04: `ros-noetic-grid-map-msgs`）。`system=ddv2` / `pid` 不依赖，`setup.py` 已按需 import。
+- MPPI/TAL/TNT 等原依赖 `grid_map_msgs`（ROS2: `ros-humble-grid-map-msgs`；ROS1: `ros-noetic-grid-map-msgs`）。无 ROS 时 `verti_bench_env.sh` / `collect_expert_verti.py` 会自动启用 `verti_bench/third_party/ros_msg_stubs`。`system=ddv2` / `pid` 本就不依赖 ROS。
 
 ---
 

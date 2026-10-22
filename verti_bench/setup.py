@@ -14,8 +14,10 @@ import argparse
 from PIL import Image
 
 from verti_bench.envs.utils.utils import SetChronoDataDirectories
+from verti_bench.envs.utils.ros_msg_stubs import ensure_ros_msg_stubs
 
 # Lazy imports: MPPI/TAL/TNT/etc. need ROS grid_map_msgs; DDV2/PID do not.
+# Offline stubs cover missing ROS on headless collect boxes.
 _SYSTEM_SIM = {
     'pid': ('verti_bench.systems.PID.PID_sim', 'PIDSim'),
     'eh': ('verti_bench.systems.EH.EH_sim', 'EHSim'),
@@ -35,6 +37,8 @@ _SYSTEM_SIM = {
 def _load_sim_class(system):
     if system not in _SYSTEM_SIM:
         raise ValueError(f"Unknown system: {system}")
+    if system in ('mppi', 'mppi6', 'tal', 'tnt', 'wmvct'):
+        ensure_ros_msg_stubs()
     module_name, class_name = _SYSTEM_SIM[system]
     import importlib
     return getattr(importlib.import_module(module_name), class_name)
