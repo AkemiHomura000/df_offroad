@@ -34,6 +34,10 @@
 *.safetensors
 *.engine
 *.trt
+# Verti-Bench planner assets required at import (small; tracked explicitly)
+!verti_bench/systems/*/best_traversability_model.pth
+!verti_bench/systems/*/Kr_model_50.pth
+!verti_bench/systems/*/stats_kr_bench.pkl
 
 # ----- Verti-Bench simulation assets / maps (Python under verti_bench/ kept) -----
 /verti_bench/envs/data/

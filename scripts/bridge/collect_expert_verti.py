@@ -105,6 +105,55 @@ def preflight_chrono_data() -> str:
         )
     return data
 
+
+# Planner weight files live under verti_bench/systems/<DIR>/ (often gitignored *.pth/*.pkl).
+_SYSTEM_WEIGHT_DIR = {
+    'mppi': 'MPPI',
+    'mppi6': 'MPPI6',
+    'tal': 'TAL',
+    'tnt': 'TNT',
+    'wmvct': 'WMVCT',
+}
+_SYSTEM_WEIGHT_FILES = {
+    'mppi': ['best_traversability_model.pth', 'TAL_13_14_14.torch', 'stats_rock.pickle'],
+    'mppi6': [
+        'best_traversability_model.pth',
+        'Kr_model_50.pth',
+        'stats_kr_bench.pkl',
+        'TAL_13_14_14.torch',
+        'stats_rock.pickle',
+    ],
+    'tal': ['best_traversability_model.pth', 'TAL_13_14_14.torch', 'stats_rock.pickle'],
+    'tnt': ['best_traversability_model.pth', 'TAL_13_14_14.torch', 'stats_rock.pickle'],
+    'wmvct': ['best_traversability_model.pth', 'TAL_13_14_14.torch', 'stats_rock.pickle'],
+}
+
+
+def preflight_system_weights(systems):
+    """Fail fast if selected planners are missing co-located weight files."""
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    missing = []
+    for sys_name in systems:
+        rel_dir = _SYSTEM_WEIGHT_DIR.get(sys_name)
+        if not rel_dir:
+            continue
+        sys_dir = os.path.join(root, 'verti_bench', 'systems', rel_dir)
+        for name in _SYSTEM_WEIGHT_FILES.get(sys_name, []):
+            path = os.path.join(sys_dir, name)
+            if not os.path.isfile(path):
+                missing.append(os.path.relpath(path, root))
+    if missing:
+        joined = '\n  '.join(missing)
+        raise FileNotFoundError(
+            f"missing planner weight file(s):\n  {joined}\n"
+            "These are small Verti-Bench assets (often ignored by *.pth/*.pkl). "
+            "Sync from a machine that has them, e.g.\n"
+            "  rsync -avz --include='*/' --include='*.pth' --include='*.pkl' "
+            "--include='*.torch' --include='*.pickle' --exclude='*' "
+            "verti_bench/systems/ USER@HOST:df_offroad/verti_bench/systems/"
+        )
+
+
 ASTAR_SYSTEMS = ['pid', 'eh', 'mppi', 'mppi6', 'tal', 'tnt', 'wmvct']
 CFG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        '../../verti_bench/envs/data/BenchMaps/sampled_maps/Configs/Final')
@@ -737,8 +786,9 @@ def main():
 
     try:
         chrono_data = preflight_chrono_data()
+        preflight_system_weights(systems)
     except Exception as ex:
-        print(f'[preflight] Chrono data check failed: {format_exception(ex)}', flush=True)
+        print(f'[preflight] check failed: {format_exception(ex)}', flush=True)
         raise
 
     print(
