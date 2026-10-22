@@ -436,13 +436,17 @@ class PIDSim:
                             path = os.path.join(
                                 self.ddv2_dump_dir, f"obs_{self._ddv2_dump_count:03d}.npz"
                             )
-                            np.savez_compressed(
-                                path,
+                            dump = dict(
                                 camera_feature=cam,
                                 lidar_feature=lid,
                                 status_feature=st,
                                 cam_front=obs["cam_front"],
                             )
+                            if "cam_depth" in obs:
+                                dump["cam_depth"] = obs["cam_depth"]
+                                dump["depth_feature"] = obs["depth_feature"]
+                                dump["depth_max"] = obs["depth_max"]
+                            np.savez_compressed(path, **dump)
                             self._ddv2_dump_count += 1
         
         return None, False, 0, 0  # Return default values if loop exits unexpectedly

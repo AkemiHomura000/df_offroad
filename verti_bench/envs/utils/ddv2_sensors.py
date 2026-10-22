@@ -2,7 +2,10 @@
 DDV2-aligned sensor suite for Verti-Bench / Chrono.
 
 Produces observation tensors matching DiffusionDriveV2 feature sizes:
-  camera_feature: (3, 256, 1024)  float32 in [0, 1]  — single front camera
+  camera_feature: (3, 256, 1024)  float32 in [0, 1]  — front RGB
+  depth_feature:  (1, 256, 1024)  float32 in [0, 1]  — same view/size, depth/max
+  cam_front:      (256, 1024, 3)  uint8 RGB
+  cam_depth:      (256, 1024)     float32 meters (raw depth)
   lidar_feature:  (1, 256, 256)   float32 BEV (±32 m, 4 px/m)
       default = chassis-frame max-z elevation mapped to [0, 1]
       (exp/lidar-elevation-bev; set lidar_bev_mode="density" for legacy hist)
@@ -76,7 +79,11 @@ class DDV2SensorConfig:
     # Chrono XYZI is in sensor frame; transform to chassis before height filters.
     # If True, single-channel BEV keeps ground (z<=split); DDV2 NAVSIM default drops it.
     include_ground_in_bev: bool = True
-    flip_camera_ud: bool = True  # Chrono RGBA buffer is often vertically flipped
+    flip_camera_ud: bool = True  # Chrono RGBA/depth buffers are often vertically flipped
+
+    # Front depth camera: same pose / resolution / HFOV as RGB; meters → [0,1] via depth_max.
+    enable_depth_camera: bool = True
+    depth_max: float = 40.0
 
     # What goes into lidar_feature (DDV2 backbone input).
     # "elevation": max-z BEV → [0,1] with elev_min/elev_max (matches verti_ddv2_elevation)
@@ -94,7 +101,7 @@ class DDV2SensorConfig:
 
 
 class DDV2SensorSuite:
-    """Attach one front camera + lidar to a Chrono chassis; export DDV2-sized features."""
+    """Attach front RGB (+ optional depth) + lidar; export DDV2-sized features."""
 
     def __init__(
         self,
@@ -119,6 +126,9 @@ class DDV2SensorSuite:
         )
 
         self.camera = self._make_camera()
+        self.depth_camera: Optional[sens.ChDepthCamera] = None
+        if self.cfg.enable_depth_camera:
+            self.depth_camera = self._make_depth_camera()
         self.lidar = self._make_lidar()
 
         self._prev_vel_xy: Optional[np.ndarray] = None
@@ -155,6 +165,27 @@ class DDV2SensorSuite:
         self.manager.AddSensor(cam)
         return cam
 
+    def _make_depth_camera(self) -> sens.ChDepthCamera:
+        """Same mount / size / HFOV as RGB; OptiX depth in meters.
+
+        ChDepthCamera already installs ChFilterDepthAccess (+ DepthToRGBA8) in C++.
+        """
+        depth = sens.ChDepthCamera(
+            self.chassis,
+            self.cfg.cam_update_hz,
+            self._cam_pose(),
+            self.cfg.cam_width,
+            self.cfg.cam_height,
+            self.cfg.cam_hfov,
+            float(self.cfg.depth_max),
+        )
+        depth.SetName("cam_depth")
+        depth.SetLag(0)
+        depth.SetCollectionWindow(0)
+        depth.SetMaxDepth(float(self.cfg.depth_max))
+        self.manager.AddSensor(depth)
+        return depth
+
     def _make_lidar(self) -> sens.ChLidarSensor:
         lidar = sens.ChLidarSensor(
             self.chassis,
@@ -189,12 +220,61 @@ class DDV2SensorSuite:
             rgb = np.flipud(rgb)
         return np.ascontiguousarray(rgb)
 
+    def _read_depth(self, cam: sens.ChDepthCamera) -> Optional[np.ndarray]:
+        """Depth in meters, shape (H, W) float32. Invalid / beyond max → depth_max."""
+        buf = cam.GetMostRecentDepthBuffer()
+        if not buf.HasData():
+            return None
+        h, w = int(buf.Height), int(buf.Width)
+        raw = buf.GetDepthData()
+        # Prefer vectorized path; fallback for SWIG PixelDepth[].
+        depth = None
+        try:
+            arr = np.asarray(raw, dtype=np.float32).reshape(-1)
+            if arr.size == h * w:
+                depth = arr.reshape(h, w)
+        except (TypeError, ValueError):
+            depth = None
+        if depth is None:
+            n = h * w
+            depth = np.empty(n, dtype=np.float32)
+            # SWIG often wraps PixelDepth as objects with .depth
+            if hasattr(raw, "__len__") and len(raw) >= n:
+                for i in range(n):
+                    pix = raw[i]
+                    depth[i] = float(pix.depth if hasattr(pix, "depth") else pix)
+            else:
+                for i, pix in enumerate(raw):
+                    if i >= n:
+                        break
+                    depth[i] = float(pix.depth if hasattr(pix, "depth") else pix)
+            depth = depth.reshape(h, w)
+        max_d = float(self.cfg.depth_max)
+        depth = np.where(np.isfinite(depth) & (depth > 0.0), depth, max_d)
+        depth = np.clip(depth, 0.0, max_d).astype(np.float32)
+        if self.cfg.flip_camera_ud:
+            depth = np.flipud(depth)
+        return np.ascontiguousarray(depth)
+
     def _to_camera_feature(self, rgb: np.ndarray) -> np.ndarray:
         """Ensure (3, 256, 1024) float32 in [0, 1]."""
         h, w = self.cfg.camera_out_h, self.cfg.camera_out_w
         if rgb.shape[0] != h or rgb.shape[1] != w:
-            rgb = cv2.resize(rgb, (w, h))
+            rgb = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_AREA)
         return np.transpose(rgb.astype(np.float32) / 255.0, (2, 0, 1))
+
+    def _to_depth_hw(self, depth: np.ndarray) -> np.ndarray:
+        """Resize depth (meters) to camera_out_h × camera_out_w."""
+        h, w = self.cfg.camera_out_h, self.cfg.camera_out_w
+        if depth.shape[0] != h or depth.shape[1] != w:
+            depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
+        return depth.astype(np.float32, copy=False)
+
+    def _to_depth_feature(self, depth: np.ndarray) -> np.ndarray:
+        """(H,W) meters → (1,H,W) float32 in [0, 1] via / depth_max."""
+        d = self._to_depth_hw(depth)
+        span = max(float(self.cfg.depth_max), 1e-3)
+        return (np.clip(d / span, 0.0, 1.0).astype(np.float32))[None, ...]
 
     def _read_lidar_xyz(self) -> Optional[np.ndarray]:
         """XYZI in sensor frame → chassis frame (add lidar mount)."""
@@ -358,6 +438,11 @@ class DDV2SensorSuite:
         rgb = self._read_rgb(self.camera)
         if rgb is None:
             return None
+        depth = None
+        if self.depth_camera is not None:
+            depth = self._read_depth(self.depth_camera)
+            if depth is None:
+                return None
         pts = self._read_lidar_xyz()
         if pts is None:
             return None
@@ -386,6 +471,11 @@ class DDV2SensorSuite:
             "cam_front": rgb,
             "lidar_xyz": pts,
         }
+        if depth is not None:
+            cam_depth = self._to_depth_hw(depth)
+            out["cam_depth"] = cam_depth
+            out["depth_feature"] = self._to_depth_feature(cam_depth)
+            out["depth_max"] = np.float32(self.cfg.depth_max)
         if goal_xy_ego is not None:
             out["goal_xy_ego"] = goal_xy_ego
         return out

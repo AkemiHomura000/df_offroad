@@ -128,7 +128,7 @@ x \leftarrow x \cdot (1 + \gamma(c)) + \beta(c)
 
 | 输入 | 形状 | 含义 |
 |---|---|---|
-| `camera_feature` | 3×256×1024 | 前视相机 RGB，归一化到 [0, 1] |
+| `camera_feature` | 3×256×1024 | 前视相机 RGB，归一化到 [0, 1]（采集另存同视角 `cam_depth` / `depth_feature`，建库时可改用深度） |
 | `lidar_feature` | 1×256×256 | 激光雷达 BEV（±32 m，4 px/m）。**本分支默认高程**：底盘系 max-z 映射到 `[0,1]`（`elev∈[-3,4]` m）；旧版为点数直方图（截断 5 后归一化） |
 | `status_feature` | 8 | **导航条件（方案 B，默认）**：自车系目标 `[gx,gy]/32`→`[-1,1]` + 底盘 Cardan `[roll,pitch]/π`→`[-1,1]`，共 4 维；后接自车系 `vx,vy,ax,ay`。旧版为 L/S/R/U one-hot（`status_nav_mode=command`） |
 

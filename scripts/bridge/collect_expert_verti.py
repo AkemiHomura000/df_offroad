@@ -11,7 +11,9 @@ Layout:
       traj.csv                        t,x,y,z,roll,pitch,yaw,heading,speed,vx,vy,vz,wz,steer,throttle,brake,goal_x,goal_y,dist_goal
       astar_path.npy                  initial global path (N,2), chrono coords
       obs/obs_{k:05d}.npz             (--sensors) at --obs_hz:
-                                      cam_front uint8 (256,1024,3),
+                                      cam_front uint8 (256,1024,3) RGB,
+                                      cam_depth float32 (256,1024) meters (same view/size),
+                                      depth_max float32 scalar (clip / normalize),
                                       lidar_density (1,256,256) count hist in [0,1],
                                       lidar_elevation (1,256,256) max-z chassis frame (empty=0),
                                       lidar_feature (=elevation [0,1] by default; DDV2 input),
@@ -19,15 +21,17 @@ Layout:
                                         + roll/pitch /π in [2:4] + vel/acc
                                         (scheme B; or legacy one-hot if status_nav_mode=command),
                                       pose [x,y,z,heading,roll,pitch] (rad), t, speed
-      snapshot.png                    mid-episode cam | density | elevation collage
+      snapshot.png                    mid-episode RGB | depth | density | elevation collage
 
 Turn episodes into DDV2 training samples with build_verti_ddv2_dataset.py.
 
 Example:
   python collect_expert_verti.py --systems mppi6,pid --worlds low --goal_mode random --episodes 0
+  python collect_expert_verti.py --num_workers 4 --systems mppi6,pid --worlds low --episodes 200
 """
 import argparse
 import csv
+import fcntl
 import glob
 import json
 import os
@@ -279,8 +283,21 @@ def _world_traj_panel(size, tr, pose, start, goal, astar=None):
     return np.array(img)
 
 
+def _depth_to_rgb(depth_hw, depth_max=40.0):
+    """(H,W) meters → RGB uint8 turbo-ish gray→yellow (near→far)."""
+    d = np.asarray(depth_hw, dtype=np.float32)
+    span = max(float(depth_max), 1e-3)
+    n = np.clip(d / span, 0.0, 1.0)
+    # simple 3-stop ramp: near white → mid cyan → far dark blue
+    r = (1.0 - n)
+    g = (1.0 - 0.5 * n)
+    b = (0.35 + 0.65 * n)
+    rgb = np.stack([r, g, b], axis=-1)
+    return (np.clip(rgb, 0, 1) * 255).astype(np.uint8)
+
+
 def write_episode_snapshot(ep_dir, obs_idx=None):
-    """Collage cam | dens+traj | elev+traj | world map → ep_dir/snapshot.png."""
+    """Collage RGB | depth | dens+traj | elev+traj | world → ep_dir/snapshot.png."""
     from PIL import Image, ImageDraw, ImageFont
     obs_files = sorted(glob.glob(os.path.join(ep_dir, 'obs', 'obs_*.npz')))
     if not obs_files:
@@ -323,22 +340,35 @@ def write_episode_snapshot(ep_dir, obs_idx=None):
     world = _world_traj_panel(h, tr, pose, start, goal, astar)
 
     gap = np.full((h, 8, 3), 32, dtype=np.uint8)
-    collage = np.concatenate([cam, gap, dens_rgb, gap, elev_rgb, gap, world], axis=1)
+    panels_img = [cam]
+    panels_meta = [(cam.shape[1], 'RGB')]
+    if 'cam_depth' in d.files:
+        dmax = float(d['depth_max']) if 'depth_max' in d.files else 40.0
+        depth_rgb = _depth_to_rgb(d['cam_depth'], dmax)
+        if depth_rgb.shape[0] != h:
+            depth_rgb = np.array(Image.fromarray(depth_rgb).resize((cam.shape[1], h), Image.NEAREST))
+        panels_img.append(depth_rgb)
+        panels_meta.append((depth_rgb.shape[1], f'depth [0,{dmax:.0f}]m'))
+    panels_img.extend([dens_rgb, elev_rgb, world])
+    panels_meta.extend([
+        (h, 'density + traj'),
+        (h, f'elev [{vmin:.1f},{vmax:.1f}]m + traj'),
+        (h, 'world: A*(gray) driven(blue) start(g) goal(r)'),
+    ])
+    parts = []
+    for i, p in enumerate(panels_img):
+        if i:
+            parts.append(gap)
+        parts.append(p)
+    collage = np.concatenate(parts, axis=1)
     img = Image.fromarray(collage)
     draw = ImageDraw.Draw(img)
     try:
         font = ImageFont.load_default()
     except Exception:
         font = None
-    x0 = 0
-    panels = [
-        (cam.shape[1], 'camera'),
-        (h, 'density + traj'),
-        (h, f'elev [{vmin:.1f},{vmax:.1f}]m + traj'),
-        (h, 'world: A*(gray) driven(blue) start(g) goal(r)'),
-    ]
     x = 8
-    for w, text in panels:
+    for w, text in panels_meta:
         draw.text((x, 4), text, fill=(255, 255, 0), font=font)
         x += w + 8
     out = os.path.join(ep_dir, 'snapshot.png')
@@ -347,7 +377,7 @@ def write_episode_snapshot(ep_dir, obs_idx=None):
 
 
 class SensorRecorder:
-    """Camera + lidar density/elevation; one atomic npz per obs under ep_dir/obs/."""
+    """RGB + depth + lidar density/elevation; one atomic npz per obs under ep_dir/obs/."""
 
     def __init__(self, sim, ep_dir, hz):
         from verti_bench.envs.utils.ddv2_sensors import DDV2SensorSuite
@@ -377,19 +407,22 @@ class SensorRecorder:
         roll, pitch = chassis_roll_pitch(body)
         if status.size >= 4:
             status[2:4] = encode_attitude(roll, pitch)
+        save_kw = dict(
+            cam_front=obs['cam_front'].astype(np.uint8),
+            lidar_density=dens,
+            lidar_elevation=elev,
+            lidar_feature=lid,
+            status_feature=status.astype(np.float32),
+            pose=chassis_pose6(body),
+            t=np.float64(t),
+            speed=np.float32(vm.get_speed()),
+        )
+        if 'cam_depth' in obs:
+            save_kw['cam_depth'] = np.asarray(obs['cam_depth'], dtype=np.float32)
+            save_kw['depth_max'] = np.float32(obs.get('depth_max', 40.0))
         path = os.path.join(self.dir, f'obs_{self.n:05d}.npz')
         with open(path + '.tmp', 'wb') as f:
-            np.savez_compressed(
-                f,
-                cam_front=obs['cam_front'].astype(np.uint8),
-                lidar_density=dens,
-                lidar_elevation=elev,
-                lidar_feature=lid,
-                status_feature=status.astype(np.float32),
-                pose=chassis_pose6(body),
-                t=np.float64(t),
-                speed=np.float32(vm.get_speed()),
-            )
+            np.savez_compressed(f, **save_kw)
         os.replace(path + '.tmp', path)
         self.n += 1
 
@@ -450,9 +483,48 @@ def write_json(path, obj):
     os.replace(tmp, path)
 
 
+def append_index(out_dir, record):
+    """Append one JSONL line with an exclusive lock (safe under --num_workers)."""
+    path = os.path.join(out_dir, 'index.jsonl')
+    line = json.dumps(record) + '\n'
+    with open(path, 'a') as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            f.write(line)
+            f.flush()
+            os.fsync(f.fileno())
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
 def next_episode_id(out):
     ids = [int(m.group(1)) for d in os.listdir(out) if (m := re.match(r'ep_(\d+)_', d))]
     return max(ids) + 1 if ids else 0
+
+
+def parse_cuda_devices(spec):
+    """'0,1' → ['0','1']; empty → None (inherit ambient CUDA_VISIBLE_DEVICES)."""
+    spec = (spec or '').strip()
+    if not spec:
+        return None
+    return [p.strip() for p in spec.split(',') if p.strip()]
+
+
+def worker_launch_argv():
+    """Parent argv without a nested --_worker value."""
+    out = []
+    skip = False
+    for a in sys.argv[1:]:
+        if skip:
+            skip = False
+            continue
+        if a == '--_worker':
+            skip = True
+            continue
+        if a.startswith('--_worker='):
+            continue
+        out.append(a)
+    return out
 
 
 def run_episode(args, ep, world, system, rng):
@@ -509,10 +581,9 @@ def run_episode(args, ep, world, system, rng):
                 print(f'[ep {ep}] snapshot failed: {ex!r}', flush=True)
         meta['wall_time'] = wall.time() - meta['wall_start']
         write_json(os.path.join(ep_dir, 'meta.json'), meta)
-        with open(os.path.join(args.out, 'index.jsonl'), 'a') as f:
-            f.write(json.dumps({k: meta.get(k) for k in
+        append_index(args.out, {k: meta.get(k) for k in
                                 ('episode', 'world', 'system', 'status', 'time', 'n_samples', 'n_obs',
-                                 'start', 'goal', 'task_source')}) + '\n')
+                                 'start', 'goal', 'task_source')})
         if args.render and getattr(sim, 'vis', None) is not None:
             try:
                 sim.vis.Quit()
@@ -552,6 +623,10 @@ def main():
     ap.add_argument('--seed', type=int, default=None)
     ap.add_argument('--hang_timeout', type=float, default=180.0,
                     help='kill an episode whose files stop updating for this many seconds')
+    ap.add_argument('--num_workers', type=int, default=1,
+                    help='parallel Chrono episode processes (1=serial). Sensors+depth: try 4–6 on 32GB VRAM')
+    ap.add_argument('--cuda_devices', default='',
+                    help='optional comma GPU ids for round-robin CUDA_VISIBLE_DEVICES, e.g. 0 or 0,1')
     ap.add_argument('--_worker', default='', help=argparse.SUPPRESS)
     args = ap.parse_args()
 
@@ -560,6 +635,8 @@ def main():
     if args.goal_mode == 'fixed':
         args.start = ','.join(str(v * args.scale_factor) for v in parse_xy(args.start))
         args.goal = ','.join(str(v * args.scale_factor) for v in parse_xy(args.goal))
+    if args.num_workers < 1:
+        ap.error('--num_workers must be >= 1')
     systems = [s.strip().lower() for s in args.systems.split(',') if s.strip()]
     for s in systems:
         if s not in ASTAR_SYSTEMS:
@@ -580,21 +657,18 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     seed = args.seed if args.seed is not None else int(wall.time())
     rng = np.random.default_rng(seed)
+    cuda_devs = parse_cuda_devices(args.cuda_devices)
 
-    print(f'out={args.out} systems={systems} worlds={worlds} goal_mode={args.goal_mode} seed={seed}')
-    ep, done = next_episode_id(args.out), 0
-    stats = {}
+    print(
+        f'out={args.out} systems={systems} worlds={worlds} goal_mode={args.goal_mode} '
+        f'seed={seed} num_workers={args.num_workers} cuda_devices={cuda_devs or "inherit"}',
+        flush=True,
+    )
     try:
-        while args.episodes <= 0 or done < args.episodes:
-            world = worlds[int(rng.integers(len(worlds)))]
-            system = systems[done % len(systems)]
-            status = launch_episode(args, ep, world, system, int(rng.integers(2**31)))
-            stats[status] = stats.get(status, 0) + 1
-            ep += 1
-            done += 1
-            print(f'[progress] {done} episodes  {stats}', flush=True)
+        done, stats = run_collector(args, systems, worlds, rng, cuda_devs)
+        print(f'[done] {done} episodes  {stats}', flush=True)
     except KeyboardInterrupt:
-        print(f'\n[stopped] interrupted after {done} complete episodes  {stats}', flush=True)
+        print(f'\n[stopped] interrupted  (see partial stats above)', flush=True)
         sys.exit(0)
 
 
@@ -627,42 +701,144 @@ def mark_episode(args, ep_dir, status):
         return
     meta['status'] = status
     write_json(mp, meta)
-    with open(os.path.join(args.out, 'index.jsonl'), 'a') as f:
-        f.write(json.dumps({k: meta.get(k) for k in
+    append_index(args.out, {k: meta.get(k) for k in
                             ('episode', 'world', 'system', 'status', 'start', 'goal',
-                             'task_source')}) + '\n')
+                             'task_source')})
 
 
-def launch_episode(args, ep, world, system, seed):
-    ep_dir = os.path.join(args.out, f'ep_{ep:05d}_w{world}_{system}')
-    argv = [a for a in sys.argv[1:]]
-    cmd = [sys.executable, os.path.abspath(__file__), *argv, '--_worker', f'{ep},{world},{system},{seed}']
-    proc = subprocess.Popen(cmd, start_new_session=True)
-    t_start = wall.time()
+def read_episode_status(ep_dir, default='crash'):
     try:
-        while proc.poll() is None:
-            wall.sleep(2.0)
-            last = max(latest_mtime(ep_dir), t_start)
-            if wall.time() - last > args.hang_timeout:
-                print(f'[ep {ep}] no progress for {args.hang_timeout:.0f}s -> kill (hang)', flush=True)
-                proc.kill()
-                proc.wait()
-                mark_episode(args, ep_dir, 'hang')
-                return 'hang'
-    except KeyboardInterrupt:
-        proc.send_signal(signal.SIGINT)
+        return json.load(open(os.path.join(ep_dir, 'meta.json'))).get('status', default)
+    except (OSError, ValueError):
+        return default
+
+
+def spawn_episode(args, ep, world, system, seed, cuda_dev=None):
+    """Start one episode subprocess; returns a job dict (non-blocking)."""
+    ep_dir = os.path.join(args.out, f'ep_{ep:05d}_w{world}_{system}')
+    cmd = [
+        sys.executable,
+        os.path.abspath(__file__),
+        *worker_launch_argv(),
+        '--_worker',
+        f'{ep},{world},{system},{seed}',
+    ]
+    env = os.environ.copy()
+    if cuda_dev is not None:
+        env['CUDA_VISIBLE_DEVICES'] = str(cuda_dev)
+    proc = subprocess.Popen(cmd, start_new_session=True, env=env)
+    print(
+        f'[launch ep {ep}] world={world} system={system} pid={proc.pid}'
+        + (f' cuda={cuda_dev}' if cuda_dev is not None else ''),
+        flush=True,
+    )
+    return {
+        'proc': proc,
+        'ep': ep,
+        'world': world,
+        'system': system,
+        'ep_dir': ep_dir,
+        't_start': wall.time(),
+    }
+
+
+def poll_job(args, job):
+    """Return terminal status string, or None if still running."""
+    proc = job['proc']
+    ep = job['ep']
+    ep_dir = job['ep_dir']
+    if proc.poll() is None:
+        last = max(latest_mtime(ep_dir), job['t_start'])
+        if wall.time() - last > args.hang_timeout:
+            print(f'[ep {ep}] no progress for {args.hang_timeout:.0f}s -> kill (hang)', flush=True)
+            proc.kill()
+            proc.wait()
+            mark_episode(args, ep_dir, 'hang')
+            return 'hang'
+        return None
+    # Child exited: if meta still says running, treat as crash.
+    mark_episode(args, ep_dir, 'crash')
+    return read_episode_status(ep_dir, default='crash')
+
+
+def interrupt_jobs(args, jobs):
+    for job in jobs:
+        proc = job['proc']
+        if proc.poll() is not None:
+            continue
         try:
-            proc.wait(timeout=30)
+            proc.send_signal(signal.SIGINT)
+        except ProcessLookupError:
+            continue
+    deadline = wall.time() + 30.0
+    for job in jobs:
+        proc = job['proc']
+        if proc.poll() is not None:
+            mark_episode(args, job['ep_dir'], 'interrupted')
+            continue
+        remaining = max(0.1, deadline - wall.time())
+        try:
+            proc.wait(timeout=remaining)
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
-        mark_episode(args, ep_dir, 'interrupted')
-        raise
-    mark_episode(args, ep_dir, 'crash')
+        mark_episode(args, job['ep_dir'], 'interrupted')
+
+
+def run_collector(args, systems, worlds, rng, cuda_devs):
+    """Keep up to ``num_workers`` episode processes alive until episode budget / Ctrl+C."""
+    n_workers = max(1, int(args.num_workers))
+    ep = next_episode_id(args.out)
+    scheduled = 0
+    done = 0
+    stats = {}
+    active = []
+
+    def can_launch():
+        if args.episodes > 0 and scheduled >= args.episodes:
+            return False
+        return True
+
     try:
-        return json.load(open(os.path.join(ep_dir, 'meta.json'))).get('status', 'crash')
-    except (OSError, ValueError):
-        return 'crash'
+        while active or can_launch():
+            while can_launch() and len(active) < n_workers:
+                world = worlds[int(rng.integers(len(worlds)))]
+                system = systems[scheduled % len(systems)]
+                seed = int(rng.integers(2**31))
+                cuda_dev = None
+                if cuda_devs:
+                    cuda_dev = cuda_devs[scheduled % len(cuda_devs)]
+                active.append(spawn_episode(args, ep, world, system, seed, cuda_dev=cuda_dev))
+                ep += 1
+                scheduled += 1
+
+            if not active:
+                break
+
+            wall.sleep(1.0)
+            still = []
+            finished_now = 0
+            for job in active:
+                status = poll_job(args, job)
+                if status is None:
+                    still.append(job)
+                    continue
+                stats[status] = stats.get(status, 0) + 1
+                done += 1
+                finished_now += 1
+            active = still
+            if finished_now:
+                print(
+                    f'[progress] done={done}/{scheduled} active={len(active)}/{n_workers}  {stats}',
+                    flush=True,
+                )
+    except KeyboardInterrupt:
+        print(f'\n[stopping] interrupting {len(active)} workers…', flush=True)
+        interrupt_jobs(args, active)
+        print(f'[stopped] finished={done} scheduled={scheduled}  {stats}', flush=True)
+        raise
+
+    return done, stats
 
 
 if __name__ == '__main__':

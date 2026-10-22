@@ -413,8 +413,7 @@ class DDV2Sim:
                                 path = os.path.join(
                                     self.ddv2_dump_dir, f"obs_{self._ddv2_dump_count:03d}.npz"
                                 )
-                                np.savez_compressed(
-                                    path,
+                                dump = dict(
                                     camera_feature=obs["camera_feature"],
                                     lidar_feature=obs["lidar_feature"],
                                     status_feature=obs["status_feature"],
@@ -422,6 +421,13 @@ class DDV2Sim:
                                     infer_ms=np.array([infer_ms], dtype=np.float32),
                                     rtt_ms=np.array([rtt_ms], dtype=np.float32),
                                 )
+                                if "cam_depth" in obs:
+                                    dump["cam_depth"] = obs["cam_depth"]
+                                    dump["depth_feature"] = obs["depth_feature"]
+                                    dump["depth_max"] = obs["depth_max"]
+                                if "cam_front" in obs:
+                                    dump["cam_front"] = obs["cam_front"]
+                                np.savez_compressed(path, **dump)
                                 self._ddv2_dump_count += 1
                             mean_ms = (
                                 float(np.mean(self._infer_ms_hist))
