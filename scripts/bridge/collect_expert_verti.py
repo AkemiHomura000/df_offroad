@@ -41,6 +41,8 @@ import signal
 import subprocess
 import sys
 import time as wall
+import traceback
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -54,6 +56,54 @@ from verti_bench.envs.utils.utils import SetChronoDataDirectories
 ROOT = Path(__file__).resolve().parents[2]
 # MPPI/TAL/TNT need grid_map_msgs; use offline stubs when ROS is not installed.
 ensure_ros_msg_stubs()
+
+
+def format_exception(ex: BaseException) -> str:
+    """Human-readable error; include errno/filename when OSError omits the path."""
+    parts = [repr(ex)]
+    if isinstance(ex, OSError):
+        if getattr(ex, "filename", None):
+            parts.append(f"filename={ex.filename!r}")
+        if getattr(ex, "filename2", None):
+            parts.append(f"filename2={ex.filename2!r}")
+        if ex.errno is not None:
+            parts.append(f"errno={ex.errno}")
+    return " | ".join(parts)
+
+
+@contextmanager
+def chrono_init_lock(out_dir: str):
+    """Serialize Chrono vehicle + OptiX sensor construction across parallel workers.
+
+    Concurrent HMMWV/OptiX init on one machine often surfaces as a bare
+    ``FileNotFoundError(2, 'No such file or directory')`` with no path.
+    Physics ``sim.run()`` stays parallel after this lock is released.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, ".chrono_init.lock")
+    with open(path, "a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def preflight_chrono_data() -> str:
+    """Ensure CHRONO_DATA_DIR has vehicle assets; return the resolved data path."""
+    SetChronoDataDirectories()
+    import pychrono as chrono
+    import pychrono.vehicle as veh
+
+    data = chrono.GetChronoDataPath()
+    vdata = veh.GetDataPath()
+    probe = os.path.join(vdata, "hmmwv", "chassis", "HMMWV_Chassis.json")
+    if not os.path.isfile(probe):
+        raise FileNotFoundError(
+            f"Chrono vehicle data missing: {probe} (CHRONO_DATA_DIR={data!r}). "
+            "source verti_bench_env.sh so CHRONO_DATA_DIR points at verti_bench/envs/data/"
+        )
+    return data
 
 ASTAR_SYSTEMS = ['pid', 'eh', 'mppi', 'mppi6', 'tal', 'tnt', 'wmvct']
 CFG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -133,7 +183,11 @@ def choose_task(args, sim, rng, ep):
         st, gl = sample_random_task(tm, rng, args.min_dist * s, args.max_dist * s,
                                     args.margin * s, args.inflate)
         st, gl = st + [z], gl + [z]
-        if not args.check_path or sim.planner.astar_path(tm.obs_path, st, gl) is not None:
+        if not args.check_path:
+            return st, gl, 'random'
+        # quiet=True: A* rejects are expected while sampling; avoid log spam.
+        path = sim.planner.astar_path(tm.obs_path, st, gl, quiet=True)
+        if path is not None:
             return st, gl, 'random'
     raise RuntimeError('no A*-feasible random task after 20 tries')
 
@@ -548,25 +602,31 @@ def run_episode(args, ep, world, system, rng):
     try:
         # Import / construct can fail (e.g. missing ROS msgs) — keep under try.
         ensure_ros_msg_stubs()
-        sim = make_sim(system, config)
-        start, goal, src = choose_task(args, sim, rng, ep)
-        meta.update(
-            difficulty=sim.terrain_manager.difficulty,
-            task_source=src,
-            start=start,
-            goal=goal,
-        )
-        write_json(os.path.join(ep_dir, 'meta.json'), meta)
-        print(f'[ep {ep}] world={world} ({meta["difficulty"]}) system={system} '
-              f'start={np.round(start[:2], 1)} goal={np.round(goal[:2], 1)} [{src}]', flush=True)
+        SetChronoDataDirectories()
+        # Serialize Chrono/OptiX construction; run() below is parallel again.
+        with chrono_init_lock(args.out):
+            sim = make_sim(system, config)
+            start, goal, src = choose_task(args, sim, rng, ep)
+            meta.update(
+                difficulty=sim.terrain_manager.difficulty,
+                task_source=src,
+                start=start,
+                goal=goal,
+            )
+            write_json(os.path.join(ep_dir, 'meta.json'), meta)
+            print(f'[ep {ep}] world={world} ({meta["difficulty"]}) system={system} '
+                  f'start={np.round(start[:2], 1)} goal={np.round(goal[:2], 1)} [{src}]',
+                  flush=True)
 
-        sim.initialize(start_pos=start, goal_pos=goal)
-        if getattr(sim, 'chrono_path', None) is None:
-            meta.update(status='no_path')
-            return meta
-        np.save(os.path.join(ep_dir, 'astar_path.npy'), np.asarray(sim.chrono_path, dtype=np.float32))
-        if args.sensors:
-            srec = SensorRecorder(sim, ep_dir, args.obs_hz)
+            sim.initialize(start_pos=start, goal_pos=goal)
+            if getattr(sim, 'chrono_path', None) is None:
+                meta.update(status='no_path')
+                return meta
+            np.save(os.path.join(ep_dir, 'astar_path.npy'),
+                    np.asarray(sim.chrono_path, dtype=np.float32))
+            if args.sensors:
+                srec = SensorRecorder(sim, ep_dir, args.obs_hz)
+
         rec = Recorder(sim, ep_dir, args.hz, srec)
         sim.vehicle_manager.advance = rec.hook(sim.vehicle_manager.advance)
         ttg, success, roll, pitch = sim.run()
@@ -577,8 +637,11 @@ def run_episode(args, ep, world, system, rng):
         meta.update(status='interrupted')
         raise
     except Exception as ex:  # keep collecting on per-episode crashes
-        meta.update(status='error', error=repr(ex))
-        print(f'[ep {ep}] error: {ex!r}', flush=True)
+        err = format_exception(ex)
+        tb = traceback.format_exc()
+        meta.update(status='error', error=err, traceback=tb)
+        print(f'[ep {ep}] error: {err}', flush=True)
+        print(tb, flush=True)
         return meta
     finally:
         if rec is not None:
@@ -672,9 +735,16 @@ def main():
     rng = np.random.default_rng(seed)
     cuda_devs = parse_cuda_devices(args.cuda_devices)
 
+    try:
+        chrono_data = preflight_chrono_data()
+    except Exception as ex:
+        print(f'[preflight] Chrono data check failed: {format_exception(ex)}', flush=True)
+        raise
+
     print(
         f'out={args.out} systems={systems} worlds={worlds} goal_mode={args.goal_mode} '
-        f'seed={seed} num_workers={args.num_workers} cuda_devices={cuda_devs or "inherit"}',
+        f'seed={seed} num_workers={args.num_workers} cuda_devices={cuda_devs or "inherit"} '
+        f'chrono_data={chrono_data}',
         flush=True,
     )
     try:

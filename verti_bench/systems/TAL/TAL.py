@@ -563,7 +563,7 @@ class TALPlanner:
         res = np.dot(T, pos_chrono)
         return (min(max(int(res[1]), 0), grid_height - 1), min(max(int(res[0]), 0), grid_width - 1))
         
-    def astar_path(self, obs_path, start_pos, goal_pos):
+    def astar_path(self, obs_path, start_pos, goal_pos, quiet=False):
         """Generate initial A* path"""
         m_terrain_length = self.terrain_manager.terrain_length
         m_terrain_width = self.terrain_manager.terrain_width
@@ -585,7 +585,8 @@ class TALPlanner:
         path = self.smooth_path_bezier(path)
         
         if path is None:
-            print("No valid path found!")
+            if not quiet:
+                print("No valid path found!")
             return None
         
         # # Plotting the path
