@@ -1,10 +1,11 @@
 """DDV2 status_feature helpers (no Chrono dependency).
 
 Layout (8,):
-  [0:4]  navigation conditioning
-         - mode "goal" (default, scheme B): ego-frame goal
+  [0:4]  navigation / attitude conditioning
+         - mode "goal" (default, scheme B):
            [0]=clip(gx/norm,-1,1), [1]=clip(gy/norm,-1,1),
-           [2]=clip(||g||/norm,0,1), [3]=0
+           [2]=clip(roll/π,-1,1),  [3]=clip(pitch/π,-1,1)
+           (roll/pitch = Chrono Cardan XYZ, radians)
          - mode "command": legacy one-hot [left, straight, right, unknown]
   [4:6]  ego-frame velocity  vx, vy  (+x forward, +y left)
   [6:8]  ego-frame acceleration ax, ay
@@ -19,6 +20,8 @@ from typing import Optional, Sequence, Tuple, Union
 import numpy as np
 
 GOAL_NORM_M = 32.0
+STATUS_DIM = 8
+ATTITUDE_NORM_RAD = float(np.pi)  # roll/pitch → [-1,1] via /π
 ArrayLike = Union[Sequence[float], np.ndarray]
 
 
@@ -41,17 +44,34 @@ def world_to_ego_xy(
     return np.array([c * dx + s * dy, -s * dx + c * dy], dtype=np.float32)
 
 
+def encode_attitude(
+    roll_rad: float = 0.0,
+    pitch_rad: float = 0.0,
+) -> np.ndarray:
+    """Cardan roll/pitch (rad) → 2-dim in [-1, 1] via /π."""
+    span = ATTITUDE_NORM_RAD
+    return np.array(
+        [
+            float(np.clip(float(roll_rad) / span, -1.0, 1.0)),
+            float(np.clip(float(pitch_rad) / span, -1.0, 1.0)),
+        ],
+        dtype=np.float32,
+    )
+
+
 def encode_goal_command(
     goal_xy_ego: Optional[ArrayLike],
     goal_norm_m: float = GOAL_NORM_M,
+    roll_rad: float = 0.0,
+    pitch_rad: float = 0.0,
 ) -> np.ndarray:
-    """Ego goal XY → 4-dim slot: [gx_n, gy_n, range_n, 0].
+    """Ego goal XY + chassis attitude → 4-dim: [gx_n, gy_n, roll_n, pitch_n].
 
-    gx,gy clipped to [-1,1]; range_n = clip(||g||/norm, 0, 1). Slot [2] distinguishes
-    this from a pure one-hot (which never carries a continuous range).
-    None / non-finite → zeros (no goal).
+    gx,gy clipped to [-1,1]; roll/pitch = Cardan XYZ / π → [-1,1].
+    None / non-finite goal → gx,gy=0 (attitude still written).
     """
     out = np.zeros(4, dtype=np.float32)
+    out[2:4] = encode_attitude(roll_rad, pitch_rad)
     if goal_xy_ego is None:
         return out
     g = np.asarray(goal_xy_ego, dtype=np.float64).reshape(-1)
@@ -61,8 +81,6 @@ def encode_goal_command(
     gx, gy = float(g[0]), float(g[1])
     out[0] = float(np.clip(gx / span, -1.0, 1.0))
     out[1] = float(np.clip(gy / span, -1.0, 1.0))
-    out[2] = float(np.clip(np.hypot(gx, gy) / span, 0.0, 1.0))
-    out[3] = 0.0
     return out
 
 
@@ -107,14 +125,33 @@ def rewrite_status_nav_goal(
     pose_xyh: ArrayLike,
     goal_xy_world: ArrayLike,
     goal_norm_m: float = GOAL_NORM_M,
+    roll_rad: Optional[float] = None,
+    pitch_rad: Optional[float] = None,
 ) -> np.ndarray:
-    """Keep vel/acc from ``status``; replace [0:4] with normalized ego goal."""
+    """Replace goal XY in [0:2]; set/keep attitude in [2:4]; keep vel/acc.
+
+    - roll_rad / pitch_rad given → write those (rad).
+    - both omitted → keep existing status[2:4] (sensor-filled attitude, or
+      legacy range_n/0 until data is recollected).
+    """
     st = np.asarray(status, dtype=np.float32).reshape(-1).copy()
-    if st.size < 8:
-        st = np.pad(st, (0, 8 - st.size)).astype(np.float32)
+    if st.size < STATUS_DIM:
+        st = np.pad(st, (0, STATUS_DIM - st.size)).astype(np.float32)
     ego = world_to_ego_xy(pose_xyh, goal_xy_world)
-    st[:4] = encode_goal_command(ego, goal_norm_m=goal_norm_m)
-    return st[:8]
+    if roll_rad is None and pitch_rad is None:
+        att = st[2:4].copy()
+    else:
+        att = encode_attitude(
+            0.0 if roll_rad is None else float(roll_rad),
+            0.0 if pitch_rad is None else float(pitch_rad),
+        )
+    st[:4] = encode_goal_command(
+        ego,
+        goal_norm_m=goal_norm_m,
+        roll_rad=float(att[0]) * ATTITUDE_NORM_RAD,
+        pitch_rad=float(att[1]) * ATTITUDE_NORM_RAD,
+    )
+    return st[:STATUS_DIM]
 
 
 def decode_goal_from_status(
@@ -127,3 +164,11 @@ def decode_goal_from_status(
         return np.zeros(2, dtype=np.float32), 0.0
     ego = (st[:2] * float(goal_norm_m)).astype(np.float32)
     return ego, float(np.hypot(ego[0], ego[1]))
+
+
+def decode_attitude_from_status(status: ArrayLike) -> Tuple[float, float]:
+    """status[2:4] → (roll_rad, pitch_rad)."""
+    st = np.asarray(status, dtype=np.float64).reshape(-1)
+    if st.size < 4:
+        return 0.0, 0.0
+    return float(st[2]) * ATTITUDE_NORM_RAD, float(st[3]) * ATTITUDE_NORM_RAD

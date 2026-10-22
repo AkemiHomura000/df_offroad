@@ -1,7 +1,7 @@
-"""Rewrite status_feature[0:4] in an existing Verti DDV2 dataset to ego-goal XY (scheme B).
+"""Rewrite status_feature nav slots in an existing Verti DDV2 dataset (scheme B).
 
-Keeps camera/lidar/trajectory; only patches status nav slots using episode goal from
-the source expert log referenced in meta.json (or --src).
+Patches [0:2] ego-goal XY and [2:4] roll/pitch/π from expert traj.csv (or obs pose),
+keeping camera/lidar/trajectory and vel/acc.
 
 Example:
   python scripts/bridge/rewrite_verti_status_goal.py \\
@@ -38,13 +38,23 @@ def episode_goal_xy(meta, traj_path):
     return float(rows[0]["goal_x"]), float(rows[0]["goal_y"])
 
 
-def load_episode_poses(ed: str) -> dict:
-    """frame_idx → pose (4,) from expert obs npz."""
-    poses = {}
+def load_traj_attitude(traj_path: str):
+    with open(traj_path) as f:
+        rows = list(csv.DictReader(f))
+    t = np.array([float(r["t"]) for r in rows], dtype=np.float64)
+    roll = np.array([float(r["roll"]) for r in rows], dtype=np.float64)
+    pitch = np.array([float(r["pitch"]) for r in rows], dtype=np.float64)
+    return t, roll, pitch
+
+
+def load_episode_obs(ed: str) -> dict:
+    """frame_idx → (pose, t) from expert obs npz."""
+    out = {}
     for op in glob.glob(os.path.join(ed, "obs", "obs_*.npz")):
         fidx = int(os.path.basename(op)[4:9])
-        poses[fidx] = np.load(op)["pose"]
-    return poses
+        d = np.load(op)
+        out[fidx] = (np.asarray(d["pose"]), float(d["t"]))
+    return out
 
 
 def patch_status_in_npz(path: str, new_status: np.ndarray) -> None:
@@ -93,21 +103,35 @@ def main():
     n_seq = len(by_seq)
     for si, (seq, items) in enumerate(sorted(by_seq.items())):
         ed = os.path.join(src, seq)
+        traj_path = os.path.join(ed, "traj.csv")
         try:
             em = json.load(open(os.path.join(ed, "meta.json")))
-            goal = episode_goal_xy(em, os.path.join(ed, "traj.csv"))
-            poses = load_episode_poses(ed)
+            goal = episode_goal_xy(em, traj_path)
+            obs_map = load_episode_obs(ed)
+            tt, rolls, pitches = load_traj_attitude(traj_path)
         except (OSError, ValueError, KeyError) as e:
             print(f"[skip] {seq}: {e}", flush=True)
             n_miss += len(items)
             continue
         for path, fidx, status in items:
-            pose = poses.get(fidx)
-            if pose is None:
+            item = obs_map.get(fidx)
+            if item is None:
                 n_miss += 1
                 continue
+            pose, t0 = item
+            pose = np.asarray(pose, dtype=np.float64).reshape(-1)
+            if pose.size >= 6:
+                roll_rad, pitch_rad = float(pose[4]), float(pose[5])
+            else:
+                roll_rad = float(np.interp(t0, tt, rolls))
+                pitch_rad = float(np.interp(t0, tt, pitches))
             new_status = rewrite_status_nav_goal(
-                status, pose, goal, goal_norm_m=args.goal_norm_m
+                status,
+                pose,
+                goal,
+                goal_norm_m=args.goal_norm_m,
+                roll_rad=roll_rad,
+                pitch_rad=pitch_rad,
             )
             if args.dry_run:
                 n_ok += 1
@@ -118,6 +142,7 @@ def main():
             print(f"[{si+1}/{n_seq}] ok={n_ok} miss={n_miss}", flush=True)
 
     meta["status_nav"] = "goal"
+    meta["status_layout"] = "goal_xy[0:2]+roll_pitch_over_pi[2:4]+vel[4:6]+acc[6:8]"
     meta["goal_norm_m"] = args.goal_norm_m
     if not args.dry_run:
         with open(meta_path, "w") as f:

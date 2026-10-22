@@ -7,7 +7,8 @@ Produces observation tensors matching DiffusionDriveV2 feature sizes:
       default = chassis-frame max-z elevation mapped to [0, 1]
       (exp/lidar-elevation-bev; set lidar_bev_mode="density" for legacy hist)
   status_feature: (8,)            nav(4) + vel(2) + accel(2)
-      default nav = ego-frame goal XY / goal_norm_m → [-1,1] in [0:2], [2:4]=0
+      default nav = ego-frame goal XY / goal_norm_m → [-1,1] in [0:2]
+      + chassis roll/pitch / π → [-1,1] in [2:4] (Chrono Cardan XYZ)
       (scheme B; set status_nav_mode="command" for legacy L/S/R/U one-hot)
 
 Requires working Chrono::sensor (CUDA / OptiX).
@@ -85,7 +86,7 @@ class DDV2SensorConfig:
     elev_max: float = 4.0
 
     # status_feature[0:4] navigation conditioning.
-    # "goal":    ego-frame goal XY / goal_norm_m clipped to [-1,1] (scheme B)
+    # "goal":    [gx,gy]/norm + [roll,pitch]/π (scheme B)
     # "command": legacy one-hot [left, straight, right, unknown]
     status_nav_mode: str = "goal"
     goal_norm_m: float = GOAL_NORM_M
@@ -311,13 +312,21 @@ class DDV2SensorSuite:
         heading = math.atan2(x_axis.y, x_axis.x)
         return float(pos.x), float(pos.y), heading
 
+    def _chassis_roll_pitch(self) -> Tuple[float, float]:
+        """Chrono Cardan XYZ: roll about X, pitch about Y (radians)."""
+        ang = self.chassis.GetRot().GetCardanAnglesXYZ()
+        return float(ang.x), float(ang.y)
+
     def _nav_command(self, goal: Optional[chrono.ChVector3d]) -> np.ndarray:
-        """Fill status[0:4] per ``status_nav_mode`` (goal XY or legacy one-hot)."""
+        """Fill status[0:4] per ``status_nav_mode`` (goal+attitude or legacy one-hot)."""
         cfg = self.cfg
+        roll, pitch = self._chassis_roll_pitch()
         if goal is None:
             if cfg.status_nav_mode == "command":
                 return encode_discrete_command(None)
-            return encode_goal_command(None, goal_norm_m=cfg.goal_norm_m)
+            return encode_goal_command(
+                None, goal_norm_m=cfg.goal_norm_m, roll_rad=roll, pitch_rad=pitch
+            )
 
         pose = self._chassis_pose_xyh()
         goal_xy = (float(goal.x), float(goal.y))
@@ -330,7 +339,9 @@ class DDV2SensorSuite:
             )
 
         ego = world_to_ego_xy(pose, goal_xy)
-        return encode_goal_command(ego, goal_norm_m=cfg.goal_norm_m)
+        return encode_goal_command(
+            ego, goal_norm_m=cfg.goal_norm_m, roll_rad=roll, pitch_rad=pitch
+        )
 
     # Back-compat alias used by older call sites / comments.
     def _driving_command(

@@ -9,12 +9,12 @@ Output layout (matches RELLIS / train_rellis_il.py):
   OUT/{train,val}/sample_XXXXXX.npz
       camera_feature (3,256,1024) f32
       lidar_feature  (1,256,256) f32
-      status_feature (8,) f32   # default: ego goal XY in [0:2] (scheme B) + vel/acc
+      status_feature (8,) f32   # goal XY [0:2] + roll/pitch/π [2:4] + vel/acc
       trajectory     (8,3) f32  ego-frame x,y,yaw at 0.5..4.0 s
   OUT/meta.json
 
-By default ``--status_nav goal`` rewrites status[0:4] from episode goal
-(meta.json / traj.csv) into ego-frame XY / --goal_norm_m (clipped [-1,1]).
+By default ``--status_nav goal`` rewrites status[0:2] from episode goal
+into ego-frame XY / --goal_norm_m; [2:4] = roll/pitch from traj.csv (or obs pose).
 Use ``--status_nav command`` to keep the one-hot stored in expert obs.
 
 Example:
@@ -63,12 +63,32 @@ def wrap(a):
 
 
 def load_traj(path):
+    """Return t, xy, heading, roll, pitch (roll/pitch unwrapped lightly via interp)."""
     with open(path) as f:
         rows = list(csv.DictReader(f))
     t = np.array([float(r['t']) for r in rows])
     xy = np.array([[float(r['x']), float(r['y'])] for r in rows])
     hd = np.unwrap(np.array([float(r['heading']) for r in rows]))
-    return t, xy, hd
+    roll = np.array([float(r['roll']) for r in rows], dtype=np.float64)
+    pitch = np.array([float(r['pitch']) for r in rows], dtype=np.float64)
+    return t, xy, hd, roll, pitch
+
+
+def attitude_at(t, roll, pitch, t0):
+    """Interpolate chassis roll/pitch (rad) at observation time t0."""
+    if len(t) == 0:
+        return 0.0, 0.0
+    r = float(np.interp(t0, t, roll))
+    p = float(np.interp(t0, t, pitch))
+    return r, p
+
+
+def pose_attitude(pose):
+    """Extract (roll, pitch) from pose if present: [x,y,z,heading,roll,pitch]."""
+    p = np.asarray(pose, dtype=np.float64).reshape(-1)
+    if p.size >= 6:
+        return float(p[4]), float(p[5])
+    return None, None
 
 
 def future_labels(t, xy, hd, t0, pose0, clip=False):
@@ -156,7 +176,7 @@ def main():
         '--status_nav',
         choices=['goal', 'command'],
         default='goal',
-        help='goal: rewrite status[0:4] as ego XY/norm (scheme B); command: keep obs one-hot',
+        help='goal: rewrite status[0:2] as ego XY/norm (+ attitude [2:4]); command: keep one-hot',
     )
     ap.add_argument(
         '--goal_norm_m',
@@ -196,7 +216,7 @@ def main():
         if meta.get('status') not in keep or not obs_files or not os.path.isfile(traj_path):
             stats['skipped_eps'] += 1
             continue
-        t, xy, hd = load_traj(traj_path)
+        t, xy, hd, roll_s, pitch_s = load_traj(traj_path)
         if len(t) < 2:
             stats['skipped_eps'] += 1
             continue
@@ -242,9 +262,18 @@ def main():
 
             cam = np.transpose(d['cam_front'].astype(np.float32) / 255.0, (2, 0, 1))
             status = np.asarray(d['status_feature'], dtype=np.float32)
+            # Prefer pose[4:6] (new collect); else interpolate traj.csv roll/pitch
+            roll_rad, pitch_rad = pose_attitude(d['pose'])
+            if roll_rad is None:
+                roll_rad, pitch_rad = attitude_at(t, roll_s, pitch_s, t0)
             if args.status_nav == 'goal':
                 status = rewrite_status_nav_goal(
-                    status, d['pose'], goal_xy, goal_norm_m=args.goal_norm_m
+                    status,
+                    d['pose'],
+                    goal_xy,
+                    goal_norm_m=args.goal_norm_m,
+                    roll_rad=roll_rad,
+                    pitch_rad=pitch_rad,
                 )
             fidx = int(os.path.basename(of)[4:9])
             for mode, out_root in modes:
@@ -260,6 +289,7 @@ def main():
             source=os.path.abspath(args.src),
             lidar_mode=mode,
             status_nav=args.status_nav,
+            status_layout='goal_xy[0:2]+roll_pitch_over_pi[2:4]+vel[4:6]+acc[6:8]',
             goal_norm_m=args.goal_norm_m if args.status_nav == 'goal' else None,
             elev_min=args.elev_min if mode == 'elevation' else None,
             elev_max=args.elev_max if mode == 'elevation' else None,

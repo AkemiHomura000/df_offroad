@@ -46,7 +46,7 @@ _GOAL_NORM_M_DEFAULT = 32.0
 
 
 def status_is_goal_nav(status: np.ndarray) -> bool:
-    """True if status[0:4] looks like scheme-B goal (not a discrete one-hot)."""
+    """True if status[0:4] looks like scheme-B goal+attitude (not discrete one-hot)."""
     st = np.asarray(status, dtype=np.float64).reshape(-1)
     if st.size < 4:
         return False
@@ -58,14 +58,8 @@ def status_is_goal_nav(status: np.ndarray) -> bool:
         and int(np.sum(np.abs(nav) < 0.08)) >= 3
     ):
         return False
-    # Goal encoding: [3]≈0 and (signed xy or positive range in [2])
-    if abs(float(nav[3])) > 0.08:
-        return False
-    if float(nav[2]) > 0.02:
-        return True
-    if float(np.min(nav[:2])) < -0.02:
-        return True
-    return float(np.linalg.norm(nav[:2])) > 0.02
+    # Scheme B: continuous [gx,gy,roll_n,pitch_n] — anything not a crisp one-hot
+    return True
 
 
 def parse_driving_command(status: np.ndarray) -> Tuple[int, str, np.ndarray]:
@@ -90,7 +84,13 @@ def parse_nav_status(
     nav = (st[:4] if st.size >= 4 else np.zeros(4)).astype(np.float32)
     if status_is_goal_nav(st):
         gx, gy = float(nav[0]) * goal_norm_m, float(nav[1]) * goal_norm_m
-        return "goal", f"GOAL ego=({gx:+.1f},{gy:+.1f})m", nav
+        roll_deg = float(nav[2]) * 180.0  # stored as rad/π → *180 = deg
+        pitch_deg = float(nav[3]) * 180.0
+        return (
+            "goal",
+            f"GOAL ({gx:+.1f},{gy:+.1f})m R={roll_deg:+.0f}° P={pitch_deg:+.0f}°",
+            nav,
+        )
     _idx, name, _vec = parse_driving_command(st)
     return "command", f"CMD: {name}", nav
 

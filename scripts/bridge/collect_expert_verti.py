@@ -15,9 +15,10 @@ Layout:
                                       lidar_density (1,256,256) count hist in [0,1],
                                       lidar_elevation (1,256,256) max-z chassis frame (empty=0),
                                       lidar_feature (=elevation [0,1] by default; DDV2 input),
-                                      status_feature (8,)= ego-goal XY/norm in [0:2] + range in [2]
-                                        + vel/acc (scheme B; or legacy one-hot if status_nav_mode=command),
-                                      pose [x,y,z,heading], t, speed
+                                      status_feature (8,)= ego-goal XY/norm in [0:2]
+                                        + roll/pitch /π in [2:4] + vel/acc
+                                        (scheme B; or legacy one-hot if status_nav_mode=command),
+                                      pose [x,y,z,heading,roll,pitch] (rad), t, speed
       snapshot.png                    mid-episode cam | density | elevation collage
 
 Turn episodes into DDV2 training samples with build_verti_ddv2_dataset.py.
@@ -42,6 +43,7 @@ import numpy as np
 from PIL import Image
 from scipy.ndimage import binary_dilation
 
+from verti_bench.envs.utils.ddv2_status import encode_attitude
 from verti_bench.envs.utils.utils import SetChronoDataDirectories
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -132,6 +134,22 @@ def choose_task(args, sim, rng, ep):
 def chassis_heading(body):
     ax = body.GetRot().GetAxisX()
     return float(np.arctan2(ax.y, ax.x))
+
+
+def chassis_roll_pitch(body):
+    """Chrono Cardan XYZ → (roll, pitch) radians."""
+    ang = body.GetRot().GetCardanAnglesXYZ()
+    return float(ang.x), float(ang.y)
+
+
+def chassis_pose6(body):
+    """[x, y, z, heading, roll, pitch] — heading stays at index 3 for legacy readers."""
+    p = body.GetPos()
+    roll, pitch = chassis_roll_pitch(body)
+    return np.array(
+        [p.x, p.y, p.z, chassis_heading(body), roll, pitch],
+        dtype=np.float64,
+    )
 
 
 BEV_RANGE, BEV_PPM = 32.0, 4.0
@@ -350,11 +368,15 @@ class SensorRecorder:
             return
         self.last_t = t
         body = vm.chassis_body
-        p = body.GetPos()
         dens = obs['lidar_density'].astype(np.float32)
         elev = obs['lidar_elevation'].astype(np.float32)
         # Prefer suite lidar_feature (elevation-normalized by default on this branch)
         lid = np.asarray(obs.get('lidar_feature', dens), dtype=np.float32)
+        status = np.asarray(obs['status_feature'], dtype=np.float32).reshape(-1).copy()
+        # Ensure attitude slots match chassis Cardan (scheme B [2:4] = roll/π, pitch/π)
+        roll, pitch = chassis_roll_pitch(body)
+        if status.size >= 4:
+            status[2:4] = encode_attitude(roll, pitch)
         path = os.path.join(self.dir, f'obs_{self.n:05d}.npz')
         with open(path + '.tmp', 'wb') as f:
             np.savez_compressed(
@@ -363,8 +385,8 @@ class SensorRecorder:
                 lidar_density=dens,
                 lidar_elevation=elev,
                 lidar_feature=lid,
-                status_feature=obs['status_feature'].astype(np.float32),
-                pose=np.array([p.x, p.y, p.z, chassis_heading(body)], dtype=np.float64),
+                status_feature=status.astype(np.float32),
+                pose=chassis_pose6(body),
                 t=np.float64(t),
                 speed=np.float32(vm.get_speed()),
             )
