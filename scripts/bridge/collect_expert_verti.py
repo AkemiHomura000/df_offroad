@@ -23,7 +23,8 @@ Layout:
                                       pose [x,y,z,heading,roll,pitch] (rad), t, speed
       snapshot.png                    mid-episode RGB | depth | density | elevation collage
 
-Turn episodes into DDV2 training samples with build_verti_ddv2_dataset.py.
+Turn episodes into DDV2 training samples with build_verti_ddv2_dataset.py
+(default --camera_mode depth uses cam_depth; needs depth in obs).
 
 Example:
   python collect_expert_verti.py --systems mppi6,pid --worlds low --goal_mode random --episodes 0

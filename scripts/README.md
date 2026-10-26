@@ -81,7 +81,7 @@ WORLDS=all TASKS=1 OUT=log/verti_ddv2_eval_100 \
 | 文件 | 作用 |
 |------|------|
 | `collect_expert_verti.py` | 专家采集核心逻辑 |
-| `build_verti_ddv2_dataset.py` | 专家 ep → dens/elevation 训练样本（默认 `--status_nav goal`） |
+| `build_verti_ddv2_dataset.py` | 专家 ep → dens/elevation 训练样本（默认 `--camera_mode depth` + `--status_nav goal`） |
 | `rewrite_verti_status_goal.py` | 已有数据集 status 重写为 ego 目标点（方案 B，不重采） |
 | `build_verti_metric_cache.py` | 为 GRPO 建 VertiMetricCache |
 | `verti_metric_cache.py` / `verti_pdm_scorer.py` | 越野 metric / VertiPDM 打分（可选 closed_loop） |

@@ -182,14 +182,27 @@ def _compose_panel(
     if nav_mode == "goal":
         goal_ego = nav4[:2] * _GOAL_NORM_M_DEFAULT
 
+    cam_src = str(obs.get("camera_feature_source", "rgb")).lower()
     cam = np.asarray(obs["camera_feature"])
     if cam.ndim == 3 and cam.shape[0] == 3:
-        cam = np.transpose(cam, (1, 2, 0))
-    cam = _to_u8_rgb(cam)
+        # Prefer true depth colormap when camera_feature is depth×3
+        if cam_src == "depth" or (
+            float(np.max(np.abs(cam[0] - cam[1]))) < 1e-5
+            and float(np.max(np.abs(cam[0] - cam[2]))) < 1e-5
+        ):
+            d01 = np.clip(cam[0], 0.0, 1.0)
+            cam_u8 = (d01 * 255.0).astype(np.uint8)
+            cam = cv2.applyColorMap(cam_u8, cv2.COLORMAP_TURBO)[:, :, ::-1]  # BGR→RGB
+            cam_src = "depth"
+        else:
+            cam = np.transpose(cam, (1, 2, 0))
+            cam = _to_u8_rgb(cam)
+    else:
+        cam = _to_u8_rgb(cam)
     h = panel_h
     cam_w = int(round(h * cam.shape[1] / max(cam.shape[0], 1)))
     cam_bgr = cv2.cvtColor(cv2.resize(cam, (cam_w, h)), cv2.COLOR_RGB2BGR)
-    _put_text(cam_bgr, "camera", (8, 22), 0.55)
+    _put_text(cam_bgr, "camera (depth)" if cam_src == "depth" else "camera", (8, 22), 0.55)
     badge = (60, 160, 255) if nav_mode == "goal" else CMD_COLORS[int(np.argmax(nav4))]
     cv2.rectangle(cam_bgr, (8, 40), (8 + 280, 88), badge, -1, cv2.LINE_AA)
     _put_text(cam_bgr, nav_label[:28], (16, 72), 0.55, (15, 15, 15), 2)

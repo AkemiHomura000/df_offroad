@@ -1,7 +1,7 @@
 """Render Verti-Bench expert episodes (collect_expert_verti.py output) to mp4.
 
 Each video frame = one recorded observation:
-  top:     front camera
+  top:     front RGB | depth (meters→color; omitted if npz has no cam_depth)
   bottom:  lidar BEV + future 4 s GT trajectory | world map (height, obstacles, A* path,
            driven path, pose, start/goal) | speed / steer / throttle vs time
 
@@ -33,6 +33,32 @@ from build_verti_ddv2_dataset import future_labels  # noqa: E402
 ROOT = str(Path(__file__).resolve().parents[2])
 MAPS = os.path.join(ROOT, 'verti_bench/envs/data/BenchMaps/sampled_maps')
 BEV_RANGE, BEV_PPM = 32.0, 4.0
+
+
+def depth_to_rgb(depth_hw, depth_max=40.0):
+    """(H,W) meters → RGB uint8 (near white → far blue); same ramp as collect snapshot."""
+    d = np.asarray(depth_hw, dtype=np.float32)
+    span = max(float(depth_max), 1e-3)
+    n = np.clip(d / span, 0.0, 1.0)
+    r = (1.0 - n)
+    g = (1.0 - 0.5 * n)
+    b = (0.35 + 0.65 * n)
+    return (np.clip(np.stack([r, g, b], axis=-1), 0, 1) * 255).astype(np.uint8)
+
+
+def cam_panel(d):
+    """RGB, or RGB|depth side-by-side when cam_depth is present."""
+    rgb = np.asarray(d['cam_front'])
+    if 'cam_depth' not in d.files:
+        return rgb, 'RGB'
+    dmax = float(d['depth_max']) if 'depth_max' in d.files else 40.0
+    depth_rgb = depth_to_rgb(d['cam_depth'], dmax)
+    if depth_rgb.shape[:2] != rgb.shape[:2]:
+        depth_rgb = np.array(
+            Image.fromarray(depth_rgb).resize((rgb.shape[1], rgb.shape[0]), Image.NEAREST)
+        )
+    gap = np.full((rgb.shape[0], 4, 3), 32, dtype=np.uint8)
+    return np.concatenate([rgb, gap, depth_rgb], axis=1), f'RGB | depth [0,{dmax:.0f}]m'
 
 
 def parse_ep_spec(spec, src):
@@ -92,7 +118,10 @@ def render_episode(ep_dir, out_dir, fps, dpi, max_frames):
     hd = np.unwrap(tr['heading'])
     start, goal = meta['start'], meta['goal']
 
-    fig = plt.figure(figsize=(16, 9), dpi=dpi)
+    d0 = np.load(obs_files[0])
+    panel0, cam_title = cam_panel(d0)
+    wide = panel0.shape[1] > d0['cam_front'].shape[1] + 8
+    fig = plt.figure(figsize=(18 if wide else 16, 9), dpi=dpi)
     gs = fig.add_gridspec(2, 3, height_ratios=[1, 1.9], width_ratios=[1, 1.15, 1.1],
                           hspace=0.18, wspace=0.18, left=0.04, right=0.98, top=0.93, bottom=0.06)
     ax_cam = fig.add_subplot(gs[0, :])
@@ -101,9 +130,9 @@ def render_episode(ep_dir, out_dir, fps, dpi, max_frames):
     sub = gs[1, 2].subgridspec(2, 1, hspace=0.3)
     ax_v, ax_c = fig.add_subplot(sub[0]), fig.add_subplot(sub[1])
 
-    d0 = np.load(obs_files[0])
-    im_cam = ax_cam.imshow(d0['cam_front'])
+    im_cam = ax_cam.imshow(panel0)
     ax_cam.set_axis_off()
+    ax_cam.set_title(cam_title, fontsize=10, pad=2)
 
     n_bev = int(2 * BEV_RANGE * BEV_PPM)
     im_bev = ax_bev.imshow(np.zeros((n_bev, n_bev)), cmap='gray', vmin=0, vmax=1)
@@ -163,7 +192,9 @@ def render_episode(ep_dir, out_dir, fps, dpi, max_frames):
         d = np.load(of)
         t0 = float(d['t'])
         pose = d['pose']
-        im_cam.set_data(d['cam_front'])
+        panel, cam_title = cam_panel(d)
+        im_cam.set_data(panel)
+        ax_cam.set_title(cam_title, fontsize=10, pad=2)
         im_bev.set_data(d['lidar_feature'][0][::-1, ::-1])
         fut = future_labels(t, xy, hd, t0, pose, clip=True)
         if fut is not None and len(fut):

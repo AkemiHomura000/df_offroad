@@ -5,6 +5,10 @@ Can emit one or both lidar variants (same frames / same train–val split):
   --lidar_mode density     → lidar_feature = point-count BEV in [0,1]
   --lidar_mode both        → write two out dirs in one pass
 
+Camera modality (fills camera_feature, always 3×H×W for ResNet34):
+  --camera_mode depth      → cam_depth / depth_max, repeated ×3  (default; needs cam_depth in obs)
+  --camera_mode rgb        → cam_front / 255
+
 Output layout (matches RELLIS / train_rellis_il.py):
   OUT/{train,val}/sample_XXXXXX.npz
       camera_feature (3,256,1024) f32
@@ -19,8 +23,9 @@ Use ``--status_nav command`` to keep the one-hot stored in expert obs.
 
 Example:
   python build_verti_ddv2_dataset.py --src log/verti_expert --lidar_mode both \\
-    --out_density datasets/verti_ddv2_density \\
-    --out_elevation datasets/verti_ddv2_elevation
+    --camera_mode depth \\
+    --out_density datasets/verti_ddv2_density_depth \\
+    --out_elevation datasets/verti_ddv2_elevation_depth
 """
 import argparse
 import csv
@@ -44,6 +49,21 @@ from verti_bench.envs.utils.ddv2_status import (  # noqa: E402
 )
 
 H_STEPS, H_DT = 8, 0.5
+DEFAULT_DEPTH_MAX = 40.0
+
+
+def make_camera_feature(d, camera_mode: str, depth_max_default: float = DEFAULT_DEPTH_MAX) -> np.ndarray:
+    """Build (3,H,W) float32 in [0,1] from expert obs npz."""
+    if camera_mode == "rgb":
+        return np.transpose(d["cam_front"].astype(np.float32) / 255.0, (2, 0, 1))
+    if "cam_depth" not in d.files:
+        raise KeyError("cam_depth")
+    depth = np.asarray(d["cam_depth"], dtype=np.float32)
+    if depth.ndim == 3 and depth.shape[0] == 1:
+        depth = depth[0]
+    dmax = float(np.asarray(d["depth_max"]).reshape(-1)[0]) if "depth_max" in d.files else float(depth_max_default)
+    d1 = np.clip(depth / max(dmax, 1e-3), 0.0, 1.0).astype(np.float32)
+    return np.repeat(d1[None, ...], 3, axis=0)
 
 
 def episode_goal_xy(meta, traj_path):
@@ -163,9 +183,19 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--src', default=str(ROOT / "log/verti_expert"))
     ap.add_argument('--lidar_mode', choices=['density', 'elevation', 'both'], default='elevation')
+    ap.add_argument(
+        '--camera_mode',
+        choices=['depth', 'rgb'],
+        default='depth',
+        help='depth: cam_depth/depth_max ×3 → camera_feature (default); rgb: cam_front/255',
+    )
+    ap.add_argument('--depth_max', type=float, default=DEFAULT_DEPTH_MAX,
+                    help='fallback depth_max (m) when obs npz has no depth_max key')
     ap.add_argument('--out', default='', help='single-mode output dir')
-    ap.add_argument('--out_density', default=str(ROOT / "datasets/verti_ddv2_density"))
-    ap.add_argument('--out_elevation', default=str(ROOT / "datasets/verti_ddv2_elevation"))
+    ap.add_argument('--out_density', default='',
+                    help='density out dir (default: datasets/verti_ddv2_density[_depth])')
+    ap.add_argument('--out_elevation', default='',
+                    help='elevation out dir (default: datasets/verti_ddv2_elevation[_depth])')
     ap.add_argument('--status', default='success')
     ap.add_argument('--min_t', type=float, default=1.0)
     ap.add_argument('--min_progress', type=float, default=0.5)
@@ -186,6 +216,12 @@ def main():
     )
     args = ap.parse_args()
 
+    cam_suffix = '_depth' if args.camera_mode == 'depth' else ''
+    if not args.out_density:
+        args.out_density = str(ROOT / f'datasets/verti_ddv2_density{cam_suffix}')
+    if not args.out_elevation:
+        args.out_elevation = str(ROOT / f'datasets/verti_ddv2_elevation{cam_suffix}')
+
     keep = set(s.strip() for s in args.status.split(',') if s.strip())
     modes = []
     if args.lidar_mode in ('density', 'both'):
@@ -200,7 +236,9 @@ def main():
 
     samples = {m: [] for m, _ in modes}
     sid = 0
-    stats = dict(episodes=0, skipped_eps=0, obs=0, no_future=0, stuck=0, no_elev=0, no_goal=0)
+    stats = dict(
+        episodes=0, skipped_eps=0, obs=0, no_future=0, stuck=0, no_elev=0, no_goal=0, no_depth=0,
+    )
     # Split by kept-episode order so train/val membership is identical for both outs.
     kept_ei = 0
     ep_dirs = sorted(glob.glob(os.path.join(args.src, 'ep_*')))
@@ -260,7 +298,11 @@ def main():
                 stats['no_elev'] += 1
                 continue
 
-            cam = np.transpose(d['cam_front'].astype(np.float32) / 255.0, (2, 0, 1))
+            try:
+                cam = make_camera_feature(d, args.camera_mode, depth_max_default=args.depth_max)
+            except KeyError:
+                stats['no_depth'] += 1
+                continue
             status = np.asarray(d['status_feature'], dtype=np.float32)
             # Prefer pose[4:6] (new collect); else interpolate traj.csv roll/pitch
             roll_rad, pitch_rad = pose_attitude(d['pose'])
@@ -288,6 +330,13 @@ def main():
         out_meta = dict(
             source=os.path.abspath(args.src),
             lidar_mode=mode,
+            camera_mode=args.camera_mode,
+            camera_feature=(
+                'depth/depth_max repeated ×3'
+                if args.camera_mode == 'depth'
+                else 'cam_front/255'
+            ),
+            depth_max_default=args.depth_max if args.camera_mode == 'depth' else None,
             status_nav=args.status_nav,
             status_layout='goal_xy[0:2]+roll_pitch_over_pi[2:4]+vel[4:6]+acc[6:8]',
             goal_norm_m=args.goal_norm_m if args.status_nav == 'goal' else None,

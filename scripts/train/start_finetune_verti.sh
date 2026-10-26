@@ -20,10 +20,10 @@ if ! nvidia-smi &>/dev/null; then
 fi
 nvidia-smi --query-gpu=name,memory.free --format=csv,noheader
 
-OUT="${OUT:-$ROOT/log/verti_il_finetune_elevation}"
+OUT="${OUT:-$ROOT/log/verti_il_finetune_elevation_depth}"
 mkdir -p "$OUT"
 export OUT \
-  DATA_DIR="${DATA_DIR:-$ROOT/datasets/verti_ddv2_elevation}" \
+  DATA_DIR="${DATA_DIR:-$ROOT/datasets/verti_ddv2_elevation_depth}" \
   INIT_CKPT="${INIT_CKPT:-$ROOT/DiffusionDriveV2/ckpts/diffusiondrive_navsim_88p1_PDMS}" \
   PLAN_ANCHOR="${PLAN_ANCHOR:-$ROOT/DiffusionDriveV2/kmeans_verti_traj_20.npy}" \
   EPOCHS="${EPOCHS:-10}" \
